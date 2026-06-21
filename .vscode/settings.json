@@ -1,0 +1,10 @@
+{
+  "emmet.includeLanguages": {
+    "rust": "html"
+  },
+  "editor.formatOnSave": true,
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer"
+  },
+  "rust-analyzer.rustfmt.overrideCommand": ["leptosfmt", "--stdin", "--rustfmt"]
+}

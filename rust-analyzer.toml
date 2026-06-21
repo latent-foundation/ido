@@ -1,0 +1,4 @@
+# Format-on-save delegates to leptosfmt so the `view!` macro is formatted too
+# (plain rustfmt can't parse it). Mirrored in .vscode/settings.json for VS Code.
+[rustfmt]
+overrideCommand = ["leptosfmt", "--stdin", "--rustfmt"]

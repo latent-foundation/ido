@@ -1,0 +1,4 @@
+[submodule "vendor/latent-design"]
+    path = vendor/latent-design
+    url = https://github.com/latent-foundation/latent-design.git
+    branch = main

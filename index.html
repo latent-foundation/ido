@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ido</title>
+
+    <!-- Anti-FOUC: set theme before WASM + CSS load. ido is a writing surface,
+         so it defaults to the light stone/paper palette; a saved choice wins. -->
+    <script>
+      (function () {
+        var saved = localStorage.getItem("latent-theme");
+        document.documentElement.setAttribute("data-theme", saved || "light");
+      })();
+    </script>
+
+    <!-- Design system CSS cascade — order is mandatory -->
+    <link data-trunk rel="css" href="vendor/latent-design/tokens.css" />
+    <link data-trunk rel="css" href="vendor/latent-design/components.css" />
+    <link data-trunk rel="css" href="style/app.css" />
+
+    <!-- Static assets from the design system -->
+    <link data-trunk rel="copy-dir" href="vendor/latent-design/fonts" />
+    <link data-trunk rel="copy-dir" href="vendor/latent-design/assets" />
+
+    <link data-trunk rel="rust" data-wasm-opt="z" />
+  </head>
+  <body></body>
+</html>

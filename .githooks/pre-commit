@@ -1,0 +1,4 @@
+#!/bin/sh
+# Block commits that aren't formatted. Run `just fmt` to fix.
+# Activate once per clone: git config core.hooksPath .githooks
+just fmt-check

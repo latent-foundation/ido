@@ -1,0 +1,4 @@
+# `cargo fmt` reads each crate's edition from Cargo.toml; this also pins the
+# edition for direct rustfmt / leptosfmt `--stdin` formatting so editor
+# format-on-save matches `just fmt`.
+edition = "2021"
