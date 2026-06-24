@@ -20,8 +20,12 @@ fmt-check:
 check:
     cargo clippy --workspace -- -D warnings
 
+# Backend logic tests (the store: tree / create / rename / move / delete).
+test:
+    cargo test -p ido
+
 # Exactly what CI runs.
-verify: fmt-check check
+verify: fmt-check check test
 
 # Dev: Trunk dev server + native window, hot reload.
 dev:

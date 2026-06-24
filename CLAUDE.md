@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `ido` (井戸, "a well") is a local-first, markdown-based knowledge app in the **latent.**
 ecosystem — notes now, growing toward notes + wiki + project management. It is a Tauri
-desktop app with a Leptos (CSR → WASM) frontend. Notes are local markdown files on disk;
-the UI is intentionally bare (list, open, edit, create) and grows from there.
+desktop app with a Leptos (CSR → WASM) frontend. Notes live in a **well** — any folder the
+user picks; notes are the markdown files inside it (subfolders form the tree). The UI is
+intentionally bare (open/create a well, then list/open/edit/create notes) and grows from there.
 [README.md](README.md) is the human-facing overview; this file is the working guide.
 
 ## The big picture: a 3-layer app
@@ -28,10 +29,26 @@ restate or fork the upstream layers here.
 
 Two crates in one Cargo workspace:
 - root crate **`ido-ui`** — the Leptos frontend; `index.html` is the Trunk entry point.
-- **`src-tauri/`** — the Rust backend and the **local-first store**. `src-tauri/src/lib.rs`
-  exposes the only disk access as Tauri commands — `list_notes`, `read_note`, `write_note`,
-  `create_note` — over markdown files in `<app_data_dir>/notes`. The frontend calls them via
-  the `invoke` binding in `src/app.rs`. `withGlobalTauri` is on.
+- **`src-tauri/`** — the Rust backend and the **local-first store**. The only disk access is the
+  Tauri commands: `recent_wells` / `pick_folder` / `open_well` / `create_well` (wells), and
+  `list_tree` / `read_note` / `write_note` / `create_note` / `create_folder` / `rename_entry` /
+  `delete_entry` / `move_entry` (notes & folders, scoped to a well path — a note's **name is its
+  file name**, independent of body text). The folder picker uses `tauri-plugin-dialog` **from
+  Rust**, so no capability entry is needed; recent wells are remembered in
+  `<app_data_dir>/wells.json`. Window chrome is custom (native decorations off), driven from Rust:
+  `apply_window` (size + resizable), `show_window`, and `win_minimize` / `win_toggle_maximize` /
+  `win_close`. `withGlobalTauri` is on.
+
+Both crates are split into small, documented modules (module-level `//!` + item `///` docs):
+- **Backend** (`src-tauri/src/`): `lib.rs` wires modules + `run()`; `model` (shapes), `paths`
+  (pure id/name helpers + tests), `registry` (recent wells), `wells`, `notes` (tree + CRUD +
+  tests), `window`. Commands are `pub` in their module and listed in `generate_handler!`.
+- **Frontend** (`src/`): `model`, `ipc` (**the only place that calls `invoke`** — typed wrappers +
+  arg structs), `state` (a `State` struct of all signals, provided via Leptos context; backend
+  work lives in its action methods), `icon`, `components/{titlebar,launch,editor,tree,settings}`,
+  and `app` (root composition). Components read `expect_context::<State>()` instead of
+  prop-drilling. To add a feature: add a command (backend module + `generate_handler!`), an `ipc`
+  wrapper, a `State` method, and a component.
 
 ## Read the canon, don't restate it
 
@@ -51,9 +68,10 @@ The `/latent-design` Claude skill surfaces these (symlinked at `.claude/skills/l
 ## Commands
 
 ```sh
-just verify        # fmt-check + clippy (-D warnings) — exactly what CI runs; run before pushing
+just verify        # fmt-check + clippy (-D warnings) + backend tests — exactly what CI runs
 just fmt           # cargo fmt + leptosfmt (the only correct way to format — see below)
 just check         # cargo clippy --workspace -- -D warnings
+just test          # cargo test -p ido — backend store logic tests
 just dev           # cargo tauri dev: Trunk on :1420 + native window, hot reload
 just               # list all recipes
 
@@ -68,8 +86,11 @@ cargo check -p ido-ui                      # fast type-check of just the fronten
 - `.githooks/pre-commit` runs `just fmt-check`; activate once per clone with
   `git config core.hooksPath .githooks`. CI (`.github/workflows/ci.yml`) runs `just verify` on
   Ubuntu with Tauri's webkit deps installed.
-- **Tests: none yet.** Verify changes by running the app (`just dev`), not by adding test
-  scaffolding unless asked.
+- **Tests:** the backend store logic has unit tests in [src-tauri/src/lib.rs](src-tauri/src/lib.rs)
+  (`#[cfg(test)]`, tempdir-based — the note/folder commands take plain args, so they're called
+  directly, no mock runtime). `just test` runs them; `just verify` includes them. No frontend /
+  E2E tests yet — E2E via `tauri-driver` + WebdriverIO is the planned next layer. Verify UI
+  changes by running the app (`just dev`).
 
 ## Rules that are easy to violate
 
@@ -83,19 +104,37 @@ cargo check -p ido-ui                      # fast type-check of just the fronten
   `data-theme` before CSS loads; ido **defaults to light** (it's a writing surface). The script,
   `latent_ui::theme::initial_theme()`, and `setup_theme_effect` keep DOM + `localStorage`
   (`"latent-theme"`) in sync.
-- **Icons are Lucide only** — and inlined as SVG, not via the CDN script (it can't re-bind
-  icons across reactive re-renders). Use 1.6px stroke and `currentColor`. Never emoji, never
-  hand-drawn. (The current bare UI has no icons yet.)
+- **Icons are Lucide only** — and inlined as SVG (the `Icon` component in `src/icon.rs`), not via
+  the CDN script (it can't re-bind icons across reactive re-renders). Use 1.6px stroke and
+  `currentColor`. Never emoji, never hand-drawn.
 - **Brand:** lowercase voice; the `latent.` mark is the umbrella identity **only** — ido's mark
   is the 井戸 kanji. The current app icon ([src-tauri/app-icon.svg](src-tauri/app-icon.svg)) uses
   the latent mark as a temporary placeholder.
+- **Tauri maps camelCase JS arg keys → snake_case Rust params.** A frontend `invoke` arg struct
+  with a multi-word field (e.g. `is_dir`) must carry `#[serde(rename_all = "camelCase")]`, or the
+  command silently rejects and nothing happens. Single-word args (`well`, `id`, `name`…) are
+  unaffected — which is why this only ever bites multi-word params.
+- **Window chrome is custom** (`decorations: false`). The window starts hidden (`visible:
+  false`) and **must** be revealed by `show_window` (called at the end of startup) — skip it and
+  the app is invisible. Dragging uses `data-tauri-drag-region` on `.ido-titlebar`, which needs
+  `core:window:allow-start-dragging` in `capabilities/default.json`; the min/maximize/close
+  buttons call Rust commands, so they need no capability. **In-webview HTML5 drag-and-drop (the
+  note tree) requires `dragDropEnabled: false` on the window** — the OS file-drop handler
+  otherwise swallows `dragstart`/`drop` before they reach the page.
 - Frontend crate is edition 2021; the ecosystem convention is edition 2024. Don't "fix" this
   silently.
 
 ## Current state / not built yet
 
-The app is a deliberately bare local-first markdown editor: a sidebar list of notes + a
-textarea, autosaving to disk on every keystroke (no debounce yet). The editor is **uncontrolled**
-— content is pushed in imperatively via a `NodeRef` on open, to avoid cursor jumps from a
-reactive `value` binding. Not built yet: markdown rendering (you edit raw markdown), delete /
-rename, search, and the wiki / task / goal surfaces ido is ultimately aiming at.
+Two screens, gated on whether a well is open: a **launch screen** (recent wells + open / create)
+and the **editor** (a **folder tree** of notes + a textarea, autosaving on every keystroke — no
+debounce yet). On startup it reopens the most-recent well, falling back to the launcher only if
+there's none. The window is borderless with our own title bar: fixed / non-resizable on the
+launcher, resizable in the editor. The sidebar tree is a recursive `Tree` / `TreeRow` component
+pair — `Tree` returns `AnyView` to break the recursive-`impl Trait` cycle (E0720); new note /
+folder are created into the selected `target` folder, rename is inline, delete removes notes (and
+empty folders only), and rows are drag-and-droppable to move them between folders (`move_entry`;
+drop on the empty list area moves to the well root). The editor is **uncontrolled** — content
+pushed in imperatively via the `state.editor` `NodeRef` on open, to avoid cursor jumps from a
+reactive `value` binding. Not built yet: markdown rendering (you edit raw markdown), search, and
+the wiki / task / goal surfaces ido is ultimately aiming at.

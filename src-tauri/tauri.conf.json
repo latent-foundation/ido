@@ -14,8 +14,13 @@
     "windows": [
       {
         "title": "ido",
-        "width": 1080,
-        "height": 720
+        "width": 400,
+        "height": 520,
+        "center": true,
+        "resizable": false,
+        "decorations": false,
+        "visible": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {

@@ -1,0 +1,274 @@
+//! Notes and folders within a well: building the tree and CRUD over the markdown
+//! files. A note's name is its file stem — independent of the body text.
+//!
+//! Every command is well-scoped: it takes the well's absolute path plus an `id`
+//! (a well-relative, `/`-separated path; for notes, without `.md`).
+
+use std::fs;
+use std::path::Path;
+
+use crate::model::TreeNode;
+use crate::paths::{join_rel, note_path, parent_of, rel_path, unique_name, valid_name, well_join};
+
+/// Recursively read `dir` into [`TreeNode`]s (folders first, then notes, each
+/// alphabetical). Hidden entries (dot-prefixed) and non-`.md` files are skipped.
+fn build_tree(dir: &Path, well: &Path) -> Vec<TreeNode> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut dirs = Vec::new();
+    let mut files = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let raw = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        if raw.is_empty() || raw.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            dirs.push(TreeNode {
+                name: raw.to_string(),
+                path: rel_path(well, &path),
+                is_dir: true,
+                children: build_tree(&path, well),
+            });
+        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default()
+                .to_string();
+            files.push(TreeNode {
+                name: stem,
+                path: rel_path(well, &path.with_extension("")),
+                is_dir: false,
+                children: Vec::new(),
+            });
+        }
+    }
+    dirs.sort_by_key(|n| n.name.to_lowercase());
+    files.sort_by_key(|n| n.name.to_lowercase());
+    dirs.into_iter().chain(files).collect()
+}
+
+/// The well's whole tree of folders and notes.
+#[tauri::command]
+pub fn list_tree(well: String) -> Result<Vec<TreeNode>, String> {
+    let root = Path::new(&well);
+    Ok(build_tree(root, root))
+}
+
+/// Read a note's markdown body.
+#[tauri::command]
+pub fn read_note(well: String, id: String) -> Result<String, String> {
+    fs::read_to_string(note_path(&well, &id)).map_err(|e| e.to_string())
+}
+
+/// Write a note's markdown body, creating any missing parent folders.
+#[tauri::command]
+pub fn write_note(well: String, id: String, content: String) -> Result<(), String> {
+    let path = note_path(&well, &id);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    fs::write(path, content).map_err(|e| e.to_string())
+}
+
+/// Create a uniquely-named empty note in `parent` (`""` = root). Returns its id.
+#[tauri::command]
+pub fn create_note(well: String, parent: String) -> Result<String, String> {
+    let dir = well_join(&well, &parent);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let stem = unique_name(&dir, "untitled", "md");
+    fs::write(dir.join(format!("{stem}.md")), "").map_err(|e| e.to_string())?;
+    Ok(join_rel(&parent, &stem))
+}
+
+/// Create a uniquely-named folder in `parent` (`""` = root). Returns its id.
+#[tauri::command]
+pub fn create_folder(well: String, parent: String) -> Result<String, String> {
+    let base = well_join(&well, &parent);
+    let name = unique_name(&base, "new folder", "");
+    fs::create_dir_all(base.join(&name)).map_err(|e| e.to_string())?;
+    Ok(join_rel(&parent, &name))
+}
+
+/// Rename a note or folder in place (parent unchanged). Returns the new id.
+#[tauri::command]
+pub fn rename_entry(
+    well: String,
+    id: String,
+    is_dir: bool,
+    name: String,
+) -> Result<String, String> {
+    let name = valid_name(&name)?;
+    let new_id = join_rel(&parent_of(&id), name);
+    if new_id == id {
+        return Ok(id);
+    }
+    let root = Path::new(&well);
+    let (old, new) = if is_dir {
+        (root.join(&id), root.join(&new_id))
+    } else {
+        (
+            root.join(format!("{id}.md")),
+            root.join(format!("{new_id}.md")),
+        )
+    };
+    if new.exists() {
+        return Err("name already taken".into());
+    }
+    fs::rename(old, new).map_err(|e| e.to_string())?;
+    Ok(new_id)
+}
+
+/// Delete a note, or an *empty* folder. Non-empty folders are refused so notes
+/// are never destroyed implicitly.
+#[tauri::command]
+pub fn delete_entry(well: String, id: String, is_dir: bool) -> Result<(), String> {
+    let root = Path::new(&well);
+    if is_dir {
+        fs::remove_dir(root.join(&id)).map_err(|_| "folder isn't empty".to_string())
+    } else {
+        fs::remove_file(root.join(format!("{id}.md"))).map_err(|e| e.to_string())
+    }
+}
+
+/// Move a note or folder into the `dest` folder (`""` = well root). Returns the
+/// new id. Refuses to move a folder into itself or a descendant.
+#[tauri::command]
+pub fn move_entry(well: String, id: String, is_dir: bool, dest: String) -> Result<String, String> {
+    let base = id.rsplit('/').next().unwrap_or(&id);
+    let new_id = join_rel(&dest, base);
+    if new_id == id {
+        return Ok(id);
+    }
+    if is_dir && (dest == id || dest.starts_with(&format!("{id}/"))) {
+        return Err("can't move a folder into itself".into());
+    }
+    let root = Path::new(&well);
+    let (old, new) = if is_dir {
+        (root.join(&id), root.join(&new_id))
+    } else {
+        (
+            root.join(format!("{id}.md")),
+            root.join(format!("{new_id}.md")),
+        )
+    };
+    if new.exists() {
+        return Err("an item with that name already exists there".into());
+    }
+    if let Some(parent) = new.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    fs::rename(old, new).map_err(|e| e.to_string())?;
+    Ok(new_id)
+}
+
+// The commands take plain `String` args (no `AppHandle`/`Window`), so they are
+// callable directly here against a temp-dir well — no mock runtime needed.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::{tempdir, TempDir};
+
+    /// A fresh empty well in a temp dir. Keep the `TempDir` alive for the test.
+    fn well() -> (TempDir, String) {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_string_lossy().into_owned();
+        (dir, path)
+    }
+
+    #[test]
+    fn create_list_read_write() {
+        let (_d, w) = well();
+        assert!(list_tree(w.clone()).unwrap().is_empty());
+
+        let id = create_note(w.clone(), String::new()).unwrap();
+        assert_eq!(id, "untitled");
+        // names are unique and independent of content
+        let id2 = create_note(w.clone(), String::new()).unwrap();
+        assert_eq!(id2, "untitled-2");
+
+        let tree = list_tree(w.clone()).unwrap();
+        assert_eq!(tree.len(), 2);
+        assert!(tree.iter().all(|n| !n.is_dir));
+        assert_eq!(tree[0].name, "untitled");
+        assert_eq!(tree[0].path, "untitled");
+
+        write_note(w.clone(), id.clone(), "# Hello\n\nbody".into()).unwrap();
+        assert_eq!(read_note(w.clone(), id.clone()).unwrap(), "# Hello\n\nbody");
+        // the body changed but the name (file stem) did not
+        let tree = list_tree(w.clone()).unwrap();
+        assert_eq!(tree.iter().find(|n| n.path == id).unwrap().name, "untitled");
+    }
+
+    #[test]
+    fn folders_nest_and_sort() {
+        let (_d, w) = well();
+        let folder = create_folder(w.clone(), String::new()).unwrap();
+        assert_eq!(folder, "new folder");
+
+        let note = create_note(w.clone(), folder.clone()).unwrap();
+        assert_eq!(note, "new folder/untitled");
+        // a root-level note too, to check folders sort before files
+        create_note(w.clone(), String::new()).unwrap();
+
+        let tree = list_tree(w.clone()).unwrap();
+        assert_eq!(tree.len(), 2);
+        assert!(tree[0].is_dir, "folders come first");
+        assert_eq!(tree[0].name, "new folder");
+        assert_eq!(tree[0].children.len(), 1);
+        assert_eq!(tree[0].children[0].path, "new folder/untitled");
+        assert!(!tree[1].is_dir);
+    }
+
+    #[test]
+    fn rename_note() {
+        let (_d, w) = well();
+        let id = create_note(w.clone(), String::new()).unwrap();
+        let new_id = rename_entry(w.clone(), id.clone(), false, "hello".into()).unwrap();
+        assert_eq!(new_id, "hello");
+        assert!(read_note(w.clone(), id).is_err());
+        assert!(read_note(w.clone(), new_id).is_ok());
+
+        // renaming onto an existing name is rejected
+        let other = create_note(w.clone(), String::new()).unwrap();
+        assert!(rename_entry(w.clone(), other, false, "hello".into()).is_err());
+    }
+
+    #[test]
+    fn delete_note_and_empty_folder_only() {
+        let (_d, w) = well();
+        let id = create_note(w.clone(), String::new()).unwrap();
+        delete_entry(w.clone(), id.clone(), false).unwrap();
+        assert!(read_note(w.clone(), id).is_err());
+
+        let folder = create_folder(w.clone(), String::new()).unwrap();
+        let inside = create_note(w.clone(), folder.clone()).unwrap();
+        // non-empty folder is protected
+        assert!(delete_entry(w.clone(), folder.clone(), true).is_err());
+        delete_entry(w.clone(), inside, false).unwrap();
+        assert!(delete_entry(w.clone(), folder, true).is_ok());
+    }
+
+    #[test]
+    fn move_between_folders() {
+        let (_d, w) = well();
+        let folder = create_folder(w.clone(), String::new()).unwrap();
+        let id = create_note(w.clone(), String::new()).unwrap();
+
+        let moved = move_entry(w.clone(), id.clone(), false, folder.clone()).unwrap();
+        assert_eq!(moved, "new folder/untitled");
+        assert!(read_note(w.clone(), id).is_err());
+        assert!(read_note(w.clone(), moved.clone()).is_ok());
+
+        let back = move_entry(w.clone(), moved, false, String::new()).unwrap();
+        assert_eq!(back, "untitled");
+
+        // a folder can't be moved into itself
+        assert!(move_entry(w.clone(), folder.clone(), true, folder).is_err());
+    }
+}
