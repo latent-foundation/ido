@@ -11,7 +11,9 @@
 //! - [`wells`] — opening / creating wells + the folder picker
 //! - [`notes`] — the tree and note/folder CRUD (unit-tested)
 //! - [`window`] — custom-chrome window control
+//! - [`external`] — opening URLs in the OS
 
+mod external;
 mod model;
 mod notes;
 mod paths;
@@ -43,7 +45,8 @@ pub fn run() {
             window::show_window,
             window::win_minimize,
             window::win_toggle_maximize,
-            window::win_close
+            window::win_close,
+            external::open_external
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -4,14 +4,18 @@
 //! - [`model`] — data shapes shared with the backend
 //! - [`ipc`] — the single bridge to Tauri (typed wrappers over `invoke`)
 //! - [`state`] — reactive [`state::State`] + action methods, shared via context
+//! - [`blocks`] — markdown block segmentation for the live editor
+//! - [`markdown`] — markdown → HTML for per-block and reading-view rendering
 //! - [`icon`] — inline icons
 //! - [`components`] — the title bar, launcher, editor, tree, and settings
 //! - [`app`] — the root that composes them
 
 mod app;
+mod blocks;
 mod components;
 mod icon;
 mod ipc;
+mod markdown;
 mod model;
 mod state;
 

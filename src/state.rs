@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
+use crate::blocks::{self, Block};
 use crate::ipc;
 use crate::model::{TreeNode, WellRef};
 
@@ -18,11 +19,36 @@ pub const LAUNCH_SIZE: (f64, f64) = (400.0, 520.0);
 /// Window size for the editor (a resizable work surface).
 pub const EDITOR_SIZE: (f64, f64) = (1080.0, 720.0);
 
+/// The three editor display modes, cycling Source → Live → Reading → Source.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Mode {
+    /// Raw markdown in a single `<textarea>` (power-user / escape hatch).
+    Source,
+    /// Block live-preview: rendered blocks, click one to edit its source.
+    Live,
+    /// Fully rendered, read-only view.
+    Reading,
+}
+
 /// The parent portion of a `/`-separated id (`"a/b" -> "a"`, `"a" -> ""`).
 pub fn parent_of(id: &str) -> String {
     match id.rsplit_once('/') {
         Some((parent, _)) => parent.to_string(),
         None => String::new(),
+    }
+}
+
+/// Append `new_block` to `src` with a blank-line separator, creating a new
+/// top-level block in the document.
+fn append_to_source(src: &str, new_block: &str) -> String {
+    if src.trim().is_empty() {
+        new_block.to_string()
+    } else if src.ends_with("\n\n") {
+        format!("{src}{new_block}")
+    } else if src.ends_with('\n') {
+        format!("{src}\n{new_block}")
+    } else {
+        format!("{src}\n\n{new_block}")
     }
 }
 
@@ -56,8 +82,18 @@ pub struct State {
     pub new_name: RwSignal<String>,
     /// Chosen parent location in the create-a-well form.
     pub new_parent: RwSignal<Option<String>>,
-    /// The editor `<textarea>` (written imperatively to avoid cursor jumps).
-    pub editor: NodeRef<leptos::html::Textarea>,
+    /// The active note's full markdown source (source of truth for both modes).
+    pub content: RwSignal<String>,
+    /// Top-level blocks segmented from `content`; re-derived on open and commit.
+    pub blocks: RwSignal<Vec<Block>>,
+    /// Index of the block currently being edited in Live mode (`None` = no block active).
+    /// May equal `blocks.len()` to signal "new block being typed at the end".
+    pub active_block: RwSignal<Option<usize>>,
+    /// Current editor display mode.
+    pub mode: RwSignal<Mode>,
+    /// The Source-mode `<textarea>` — populated imperatively on open/mode-switch
+    /// so the cursor never jumps from a reactive `prop:value` binding.
+    pub source_editor: NodeRef<leptos::html::Textarea>,
 }
 
 impl State {
@@ -78,7 +114,11 @@ impl State {
             creating: RwSignal::new(false),
             new_name: RwSignal::new(String::new()),
             new_parent: RwSignal::new(None),
-            editor: NodeRef::new(),
+            content: RwSignal::new(String::new()),
+            blocks: RwSignal::new(Vec::new()),
+            active_block: RwSignal::new(None),
+            mode: RwSignal::new(Mode::Live),
+            source_editor: NodeRef::new(),
         }
     }
 
@@ -110,6 +150,10 @@ impl State {
     pub fn enter_well(self, w: WellRef) {
         self.creating.set(false);
         self.active.set(None);
+        self.content.set(String::new());
+        self.blocks.set(Vec::new());
+        self.active_block.set(None);
+        self.mode.set(Mode::Live);
         self.target.set(String::new());
         self.expanded.set(HashSet::new());
         self.well.set(Some(w));
@@ -121,6 +165,9 @@ impl State {
     pub fn leave_well(self) {
         self.well.set(None);
         self.active.set(None);
+        self.content.set(String::new());
+        self.blocks.set(Vec::new());
+        self.active_block.set(None);
         self.tree.set(Vec::new());
         spawn_local(async move { ipc::apply_window(LAUNCH_SIZE.0, LAUNCH_SIZE.1, false).await });
         self.load_recents();
@@ -182,26 +229,186 @@ impl State {
         spawn_local(async move { self.tree.set(ipc::list_tree(w.path).await) });
     }
 
-    /// Open a note: fetch its body and push it into the (uncontrolled) editor.
+    /// Open a note: fetch its body, segment it into blocks, and clear any active block.
+    ///
+    /// Empty notes start with `active_block = Some(0)` so the cursor appears
+    /// immediately without an extra click.
     pub fn open_note(self, id: String) {
         let Some(w) = self.well.get_untracked() else {
             return;
         };
         self.active.set(Some(id.clone()));
+        self.active_block.set(None);
         spawn_local(async move {
-            let content = ipc::read_note(w.path, id).await;
-            if let Some(ta) = self.editor.get_untracked() {
-                ta.set_value(&content);
+            let body = ipc::read_note(w.path, id).await;
+            let segs = blocks::segment(&body);
+            let initial_block = if body.trim().is_empty() {
+                Some(0)
+            } else {
+                None
+            };
+            self.content.set(body.clone());
+            self.blocks.set(segs);
+            self.active_block.set(initial_block);
+            // Seed the Source textarea directly when it is already in the DOM
+            // (i.e. the user opened a note while already in Source mode).
+            if let Some(ta) = self.source_editor.get_untracked() {
+                ta.set_value(&body);
             }
         });
     }
 
-    /// Persist the active note's body (called on every keystroke).
-    pub fn save_note(self, content: String) {
+    /// Commit an edited block back into the document: splice → re-segment → save.
+    ///
+    /// `idx` is the block's index at the time editing began. Three cases:
+    /// - `idx < blocks.len()`: normal splice into the existing source.
+    /// - `idx >= blocks.len()` with content: append after the current source.
+    /// - `idx >= blocks.len()` with empty text: just clear `active_block` (no save).
+    pub fn commit_block(self, idx: usize, new_text: String) {
+        let text = new_text.trim_end().to_string();
+        let (Some(w), Some(id)) = (self.well.get_untracked(), self.active.get_untracked()) else {
+            self.active_block.set(None);
+            return;
+        };
+        let old_src = self.content.get_untracked();
+        let current_blocks = self.blocks.get_untracked();
+        let new_src = if let Some(block) = current_blocks.get(idx) {
+            blocks::splice(&old_src, block, &text)
+        } else if text.is_empty() {
+            // Nothing typed in the new-block textarea — just dismiss.
+            self.active_block.set(None);
+            return;
+        } else {
+            // Append new content after the current source with a blank-line separator.
+            append_to_source(&old_src, &text)
+        };
+        let new_blocks = blocks::segment(&new_src);
+        self.content.set(new_src.clone());
+        self.blocks.set(new_blocks);
+        self.active_block.set(None);
+        spawn_local(async move { ipc::write_note(w.path, id, new_src).await });
+    }
+
+    /// Commit block `from_idx` and move focus to `to_idx`.
+    ///
+    /// Used by double-Enter (→ `idx+1`), ↑ (→ `idx-1`), ↓ (→ `idx+1`), and
+    /// Backspace-merge. `to_idx` may equal `blocks.len()` (new-block-at-end sentinel).
+    /// Skips the disk write when the source is unchanged (pure cursor navigation).
+    pub fn commit_and_go(self, from_idx: usize, text: String, to_idx: usize) {
+        let text = text.trim_end().to_string();
         let (Some(w), Some(id)) = (self.well.get_untracked(), self.active.get_untracked()) else {
             return;
         };
+        let old_src = self.content.get_untracked();
+        let current_blocks = self.blocks.get_untracked();
+        let new_src = if let Some(block) = current_blocks.get(from_idx) {
+            blocks::splice(&old_src, block, &text)
+        } else if text.is_empty() {
+            // New-block-at-end textarea was left empty — no change to source.
+            old_src.clone()
+        } else {
+            append_to_source(&old_src, &text)
+        };
+        let new_blocks = blocks::segment(&new_src);
+        // Clamp to_idx so it never exceeds blocks.len() (the new-block-at-end sentinel).
+        let target = to_idx.min(new_blocks.len());
+        self.content.set(new_src.clone());
+        self.blocks.set(new_blocks);
+        self.active_block.set(Some(target));
+        if new_src != old_src {
+            spawn_local(async move { ipc::write_note(w.path, id, new_src).await });
+        }
+    }
+
+    /// Split block `idx` at a blank line: `text_before` becomes the block's new
+    /// content and `text_after` (if non-empty) is spliced in as the next block.
+    /// When `text_after` is empty this is identical to committing and opening a
+    /// new empty block at `idx+1`.
+    pub fn split_block(self, idx: usize, text_before: String, text_after: String) {
+        let before = text_before.trim_end().to_string();
+        let after = text_after.trim_start_matches('\n').trim_end().to_string();
+        let (Some(w), Some(id)) = (self.well.get_untracked(), self.active.get_untracked()) else {
+            return;
+        };
+        let old_src = self.content.get_untracked();
+        let current_blocks = self.blocks.get_untracked();
+        let new_src = if let Some(block) = current_blocks.get(idx) {
+            let replacement = if after.is_empty() {
+                before.clone()
+            } else if before.is_empty() {
+                after.clone()
+            } else {
+                format!("{before}\n\n{after}")
+            };
+            blocks::splice(&old_src, block, &replacement)
+        } else if after.is_empty() {
+            append_to_source(&old_src, &before)
+        } else {
+            let mid = append_to_source(&old_src, &before);
+            append_to_source(&mid, &after)
+        };
+        let new_blocks = blocks::segment(&new_src);
+        let target = (idx + 1).min(new_blocks.len());
+        self.content.set(new_src.clone());
+        self.blocks.set(new_blocks);
+        self.active_block.set(Some(target));
+        spawn_local(async move { ipc::write_note(w.path, id, new_src).await });
+    }
+
+    /// Merge block `idx` with the block above it — triggered by Backspace at
+    /// cursor position 0. The two source ranges are joined with a single newline;
+    /// pulldown-cmark then re-parses them as one or more blocks depending on type
+    /// (two paragraphs become one; a heading stays separate from what follows).
+    pub fn merge_with_prev(self, idx: usize, current_text: String) {
+        if idx == 0 {
+            return;
+        }
+        let (Some(w), Some(id)) = (self.well.get_untracked(), self.active.get_untracked()) else {
+            return;
+        };
+        let old_src = self.content.get_untracked();
+        let current_blocks = self.blocks.get_untracked();
+        let (Some(prev), Some(curr)) = (current_blocks.get(idx - 1), current_blocks.get(idx))
+        else {
+            return;
+        };
+        let merged = if current_text.trim().is_empty() {
+            prev.src.clone()
+        } else {
+            format!("{}\n{}", prev.src, current_text)
+        };
+        let new_src = format!(
+            "{}{}{}",
+            &old_src[..prev.range.start],
+            merged,
+            &old_src[curr.range.end..]
+        );
+        let new_blocks = blocks::segment(&new_src);
+        self.content.set(new_src.clone());
+        self.blocks.set(new_blocks);
+        self.active_block.set(Some(idx - 1));
+        spawn_local(async move { ipc::write_note(w.path, id, new_src).await });
+    }
+
+    /// Update the full document from Source mode's textarea (called on every input).
+    pub fn update_source(self, content: String) {
+        let (Some(w), Some(id)) = (self.well.get_untracked(), self.active.get_untracked()) else {
+            return;
+        };
+        self.blocks.set(blocks::segment(&content));
+        self.content.set(content.clone());
         spawn_local(async move { ipc::write_note(w.path, id, content).await });
+    }
+
+    /// Switch to `new_mode`, clearing any active block edit.
+    pub fn set_mode(self, new_mode: Mode) {
+        self.active_block.set(None);
+        self.mode.set(new_mode);
+    }
+
+    /// Open a link from the rendered markdown in the OS browser.
+    pub fn open_link(self, url: String) {
+        spawn_local(async move { ipc::open_external(url).await });
     }
 
     /// Create a note in `parent`, open it, and start an inline rename.
@@ -268,9 +475,9 @@ impl State {
                     .is_some_and(|a| a == id || a.starts_with(&format!("{id}/")));
                 if gone {
                     self.active.set(None);
-                    if let Some(ta) = self.editor.get_untracked() {
-                        ta.set_value("");
-                    }
+                    self.content.set(String::new());
+                    self.blocks.set(Vec::new());
+                    self.active_block.set(None);
                 }
                 self.reload_tree();
             }

@@ -28,6 +28,13 @@ fn icon_paths(name: &str) -> &'static str {
         "minus" => r#"<path d="M5 12h14"/>"#,
         "square" => r#"<rect x="5" y="5" width="14" height="14" rx="1.5"/>"#,
         "x" => r#"<path d="M6 6 18 18"/><path d="M18 6 6 18"/>"#,
+        "eye" => {
+            r#"<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>"#
+        }
+        "code" => r#"<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>"#,
+        "circle-help" => {
+            r#"<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>"#
+        }
         _ => "",
     }
 }

@@ -42,10 +42,15 @@ Two crates in one Cargo workspace:
 Both crates are split into small, documented modules (module-level `//!` + item `///` docs):
 - **Backend** (`src-tauri/src/`): `lib.rs` wires modules + `run()`; `model` (shapes), `paths`
   (pure id/name helpers + tests), `registry` (recent wells), `wells`, `notes` (tree + CRUD +
-  tests), `window`. Commands are `pub` in their module and listed in `generate_handler!`.
+  tests), `window`, `external` (open URLs in the OS). Commands are `pub` in their module and
+  listed in `generate_handler!`.
 - **Frontend** (`src/`): `model`, `ipc` (**the only place that calls `invoke`** — typed wrappers +
   arg structs), `state` (a `State` struct of all signals, provided via Leptos context; backend
-  work lives in its action methods), `icon`, `components/{titlebar,launch,editor,tree,settings}`,
+  work lives in its action methods), `blocks` (top-level block segmentation for the live editor —
+  `segment` splits source into `Block`s with byte ranges; `splice` commits an edited block back
+  without touching the rest of the document), `markdown` (markdown → HTML via pulldown-cmark;
+  LaTeX math → MathML via latex2mathml; raw HTML sanitised to text; `Event`-transform seam for
+  future wikilinks/tags), `icon`, `components/{titlebar,launch,editor,tree,settings}`,
   and `app` (root composition). Components read `expect_context::<State>()` instead of
   prop-drilling. To add a feature: add a command (backend module + `generate_handler!`), an `ipc`
   wrapper, a `State` method, and a component.
@@ -86,11 +91,16 @@ cargo check -p ido-ui                      # fast type-check of just the fronten
 - `.githooks/pre-commit` runs `just fmt-check`; activate once per clone with
   `git config core.hooksPath .githooks`. CI (`.github/workflows/ci.yml`) runs `just verify` on
   Ubuntu with Tauri's webkit deps installed.
-- **Tests:** the backend store logic has unit tests in [src-tauri/src/lib.rs](src-tauri/src/lib.rs)
-  (`#[cfg(test)]`, tempdir-based — the note/folder commands take plain args, so they're called
-  directly, no mock runtime). `just test` runs them; `just verify` includes them. No frontend /
-  E2E tests yet — E2E via `tauri-driver` + WebdriverIO is the planned next layer. Verify UI
-  changes by running the app (`just dev`).
+- **Tests:** two suites, neither included in `just verify` yet for the frontend:
+  - **Backend** (`cargo test -p ido` / `just test`): tempdir-based unit tests in
+    [src-tauri/src/lib.rs](src-tauri/src/lib.rs); note/folder commands take plain args, no mock
+    runtime needed. `just verify` includes these.
+  - **Frontend** (`cargo test -p ido-ui`): pure-Rust unit tests in `src/blocks.rs` covering
+    block segmentation and splice round-trips (11 tests). These run on the host target (no WASM
+    needed) and catch range/separator bugs early. Run them explicitly — `just verify` does not
+    include them yet.
+  - No E2E tests yet — `tauri-driver` + WebdriverIO is the planned next layer. Verify UI changes
+    by running the app (`just dev`).
 
 ## Rules that are easy to violate
 
@@ -121,20 +131,63 @@ cargo check -p ido-ui                      # fast type-check of just the fronten
   buttons call Rust commands, so they need no capability. **In-webview HTML5 drag-and-drop (the
   note tree) requires `dragDropEnabled: false` on the window** — the OS file-drop handler
   otherwise swallows `dragstart`/`drop` before they reach the page.
+- **Rendered-markdown links must not navigate the webview.** The reading view intercepts `<a>`
+  clicks and routes them to `open_external` (OS browser); a link that navigated the webview would
+  white-screen the app. That handler (in `components/editor.rs`) is where internal `[[wikilinks]]`
+  will branch later. Raw HTML in notes is rendered as text, not executed (see `markdown.rs`).
 - Frontend crate is edition 2021; the ecosystem convention is edition 2024. Don't "fix" this
   silently.
 
 ## Current state / not built yet
 
 Two screens, gated on whether a well is open: a **launch screen** (recent wells + open / create)
-and the **editor** (a **folder tree** of notes + a textarea, autosaving on every keystroke — no
-debounce yet). On startup it reopens the most-recent well, falling back to the launcher only if
-there's none. The window is borderless with our own title bar: fixed / non-resizable on the
-launcher, resizable in the editor. The sidebar tree is a recursive `Tree` / `TreeRow` component
-pair — `Tree` returns `AnyView` to break the recursive-`impl Trait` cycle (E0720); new note /
-folder are created into the selected `target` folder, rename is inline, delete removes notes (and
-empty folders only), and rows are drag-and-droppable to move them between folders (`move_entry`;
-drop on the empty list area moves to the well root). The editor is **uncontrolled** — content
-pushed in imperatively via the `state.editor` `NodeRef` on open, to avoid cursor jumps from a
-reactive `value` binding. Not built yet: markdown rendering (you edit raw markdown), search, and
-the wiki / task / goal surfaces ido is ultimately aiming at.
+and the **editor** (sidebar folder tree + main pane). On startup it reopens the most-recent well,
+falling back to the launcher only if there's none. The window is borderless with its own title
+bar: fixed / non-resizable on the launcher, resizable in the editor.
+
+**Sidebar tree** — a recursive `Tree` / `TreeRow` component pair (`Tree` returns `AnyView` to
+break the recursive-`impl Trait` cycle, E0720). New note / folder are created into the selected
+`target` folder, rename is inline, delete removes notes (and empty folders only), rows are
+drag-and-droppable to move them between folders (`move_entry`; drop on the empty list area moves
+to the well root).
+
+**Main pane — three modes** (icon buttons in the editor header):
+
+- **Source** (`</>`): a single uncontrolled raw-markdown `<textarea>`, seeded imperatively from
+  `state.editor` (`NodeRef`) on open/mode-switch to avoid cursor jumps. Autosaves on every input
+  event (no debounce yet).
+
+- **Live** (pencil ✏): **block live-preview editor**, the primary editing surface. `src/blocks.rs`
+  (`segment`) splits the document source into top-level `Block`s, each with a raw-source string
+  and a byte range. `BlockEditor` renders the list: inactive blocks show rendered HTML (via
+  `markdown::render`), the active block shows a `<textarea>`. Keyboard model:
+  - **Enter on a blank line** — splits or appends a block. When the cursor sits on a blank line
+    anywhere in the textarea (detected by `cursor_on_blank_line`), pressing Enter fires
+    `State::split_block`: content before the blank line stays as the current block, content after
+    becomes the next block (or an empty new block is appended). The blank line acts as a block
+    separator, not literal content.
+  - **↑ / ↓ at first/last line** — `commit_and_go` saves the current block and moves focus to
+    the adjacent one.
+  - **Backspace at column 0** — `merge_with_prev` concatenates the current block onto the end of
+    the previous one (joined by `\n\n`) and focuses the merge point.
+  - **Escape** — deactivates the current block without committing (reverts to last-saved).
+  - **Blur** — commits as a failsafe (guarded against double-commit when the guard signal is
+    already cleared).
+  - `splice` writes the edited block back into the full document source at its byte range without
+    touching any other block. pulldown-cmark's `End`-event ranges include the trailing newline;
+    block ranges are stored using `trim_end` length to avoid eating inter-block separators on
+    splice.
+
+- **Reading** (eye 👁): fully rendered, read-only. `<a>` clicks are intercepted and routed to
+  `open_external` (OS browser) — navigating the webview directly would white-screen the app. This
+  handler is where internal `[[wikilinks]]` will branch later.
+
+**Math** — both `markdown.rs` and `blocks.rs` enable `Options::ENABLE_MATH`. `pulldown-cmark`
+emits `Event::InlineMath` (`$…$`) and `Event::DisplayMath` (`$$…$$`); the `transform` function
+in `markdown.rs` converts them to MathML via `latex2mathml` before the HTML-sanitisation arm
+runs. Display `<math>` elements must **not** have `display: block` set in CSS — Chromium's UA
+stylesheet maps `math[display="block"]` → `display: block math`, and overriding it with
+`display: block` removes the `math` inner display type and garbles MathML layout.
+
+**Not built yet:** search, wikilinks, and the wiki / task / goal surfaces ido is ultimately
+aiming at.

@@ -164,8 +164,166 @@ body {
 .ido-main {
   flex: 1 1 auto;
   min-width: 0;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   background: var(--color-bg);
+}
+
+.ido-editor-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  height: 38px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.ido-editor-title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Three-way mode toggle (Source / Live / Reading) */
+.ido-mode-buttons {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.ido-mode-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius-md) - 2px);
+  cursor: pointer;
+  color: var(--color-text-muted);
+  transition: background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-mode-btn:hover {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+.ido-mode-btn.active {
+  background: var(--color-surface-raised);
+  color: var(--color-text-primary);
+}
+
+/* Wrapper that groups the mode toggle + help button flush-right */
+.ido-head-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Help tooltip (? button + CSS-only popover) */
+.ido-help-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.ido-help-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius-md) - 2px);
+  cursor: pointer;
+  color: var(--color-text-muted);
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-help-btn:hover,
+.ido-help-btn:focus-visible {
+  color: var(--color-text-secondary);
+  outline: none;
+}
+
+.ido-help-tip {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 200;
+  width: 200px;
+  padding: 10px 12px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--dur-fast) var(--ease-standard),
+    visibility var(--dur-fast) var(--ease-standard);
+}
+
+/* Show on hover or keyboard-focus anywhere inside the wrapper */
+.ido-help-wrap:hover .ido-help-tip,
+.ido-help-wrap:focus-within .ido-help-tip {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.ido-help-head {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-2);
+}
+
+.ido-shortcuts {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ido-shortcuts > div {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+.ido-shortcuts dt {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-primary);
+  flex: 0 0 76px;
+}
+
+.ido-shortcuts dd {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.ido-editor-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .ido-editor {
@@ -174,7 +332,7 @@ body {
   max-width: 720px;
   min-height: 100%;
   margin: 0 auto;
-  padding: 56px 48px 80px;
+  padding: 48px 48px 80px;
   border: none;
   outline: none;
   resize: none;
@@ -186,6 +344,10 @@ body {
   letter-spacing: var(--tracking-body);
 }
 
+.ido-editor.hidden {
+  display: none;
+}
+
 .ido-editor::placeholder {
   color: var(--color-text-muted);
 }
@@ -193,6 +355,167 @@ body {
 .ido-editor:disabled {
   background: transparent;
   cursor: default;
+}
+
+/* rendered markdown (reading view) ===================================== */
+.markdown-body {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 48px 48px 80px;
+  font-family: var(--font-ui);
+  font-size: var(--text-body-lg);
+  line-height: var(--leading-relaxed);
+  letter-spacing: var(--tracking-body);
+  color: var(--color-text-secondary);
+}
+
+.markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  margin: 1.6em 0 0.6em;
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-heading);
+  line-height: var(--leading-snug);
+  color: var(--color-text-primary);
+}
+
+.markdown-body h1 {
+  font-size: var(--text-h2);
+}
+
+.markdown-body h2 {
+  font-size: var(--text-h3);
+}
+
+.markdown-body h3 {
+  font-size: var(--text-h4);
+}
+
+.markdown-body h4 {
+  font-size: var(--text-body-lg);
+}
+
+.markdown-body h5,
+.markdown-body h6 {
+  font-size: var(--text-body);
+  color: var(--color-text-secondary);
+}
+
+.markdown-body p {
+  margin: 0 0 1.1em;
+}
+
+.markdown-body a {
+  color: var(--color-accent);
+  text-decoration: none;
+  border-bottom: 1px solid var(--color-border-strong);
+}
+
+.markdown-body a:hover {
+  color: var(--color-accent-hover);
+  border-color: var(--color-accent);
+}
+
+.markdown-body strong {
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.markdown-body em {
+  font-style: italic;
+}
+
+.markdown-body del {
+  color: var(--color-text-muted);
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0 0 1.1em;
+  padding-left: 1.6em;
+}
+
+.markdown-body li {
+  margin: 0.25em 0;
+}
+
+.markdown-body li::marker {
+  color: var(--color-text-muted);
+}
+
+.markdown-body input[type="checkbox"] {
+  margin-right: 0.5em;
+  accent-color: var(--color-accent);
+}
+
+.markdown-body blockquote {
+  margin: 0 0 1.1em;
+  padding: 2px 0 2px 16px;
+  border-left: 2px solid var(--color-border-strong);
+  color: var(--color-text-muted);
+}
+
+.markdown-body hr {
+  margin: 2em 0;
+  border: none;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.markdown-body code {
+  padding: 0.12em 0.36em;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--color-code-bg);
+  color: var(--color-code-text);
+  border-radius: var(--radius-sm);
+}
+
+.markdown-body pre {
+  margin: 0 0 1.1em;
+  padding: 14px 16px;
+  background: var(--color-code-bg);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+}
+
+.markdown-body pre code {
+  padding: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  background: none;
+}
+
+.markdown-body table {
+  width: 100%;
+  margin: 0 0 1.1em;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.markdown-body th,
+.markdown-body td {
+  padding: 7px 12px;
+  border: 1px solid var(--color-border-subtle);
+  text-align: left;
+}
+
+.markdown-body th {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.markdown-body img {
+  max-width: 100%;
+  border-radius: var(--radius-md);
 }
 
 /* well switch (sidebar brand) ------------------------------------------- */
@@ -671,4 +994,227 @@ body {
 
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+/* ================================================= live block editor === */
+
+/* Scrollable container that holds all blocks, matches the reading-view width. */
+.ido-block-editor {
+  flex: 1;
+  overflow-y: auto;
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 48px 48px 80px;
+}
+
+/* A single rendered block — click to edit. Cursor + hover hint. */
+.ido-block {
+  cursor: text;
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  margin: 0 -6px 0.1em;
+  /* Inherit the reading-view typography so rendered blocks look identical. */
+  font-family: var(--font-ui);
+  font-size: var(--text-body-lg);
+  line-height: var(--leading-relaxed);
+  letter-spacing: var(--tracking-body);
+  color: var(--color-text-secondary);
+}
+
+.ido-block:hover {
+  background: var(--color-bg-subtle);
+}
+
+/* All the markdown-body typography rules apply inside blocks too. */
+.ido-block h1,
+.ido-block h2,
+.ido-block h3,
+.ido-block h4,
+.ido-block h5,
+.ido-block h6 {
+  margin: 0.4em 0 0.2em;
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-heading);
+  line-height: var(--leading-snug);
+  color: var(--color-text-primary);
+}
+
+.ido-block h1 { font-size: var(--text-h2); }
+.ido-block h2 { font-size: var(--text-h3); }
+.ido-block h3 { font-size: var(--text-h4); }
+.ido-block h4 { font-size: var(--text-body-lg); }
+.ido-block h5,
+.ido-block h6 { font-size: var(--text-body); color: var(--color-text-secondary); }
+
+.ido-block p { margin: 0 0 0.6em; }
+.ido-block p:last-child { margin-bottom: 0; }
+
+.ido-block a {
+  color: var(--color-accent);
+  text-decoration: none;
+  border-bottom: 1px solid var(--color-border-strong);
+}
+
+.ido-block a:hover {
+  color: var(--color-accent-hover);
+  border-color: var(--color-accent);
+}
+
+.ido-block strong {
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.ido-block em { font-style: italic; }
+.ido-block del { color: var(--color-text-muted); }
+
+.ido-block ul,
+.ido-block ol {
+  margin: 0 0 0.6em;
+  padding-left: 1.6em;
+}
+
+.ido-block li { margin: 0.2em 0; }
+.ido-block li::marker { color: var(--color-text-muted); }
+
+.ido-block blockquote {
+  margin: 0 0 0.6em;
+  padding: 2px 0 2px 16px;
+  border-left: 2px solid var(--color-border-strong);
+  color: var(--color-text-muted);
+}
+
+.ido-block hr {
+  margin: 1.4em 0;
+  border: none;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.ido-block code {
+  padding: 0.12em 0.36em;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--color-code-bg);
+  color: var(--color-code-text);
+  border-radius: var(--radius-sm);
+}
+
+.ido-block pre {
+  margin: 0 0 0.6em;
+  padding: 14px 16px;
+  background: var(--color-code-bg);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+}
+
+.ido-block pre code {
+  padding: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  background: none;
+}
+
+.ido-block table {
+  width: 100%;
+  margin: 0 0 0.6em;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.ido-block th,
+.ido-block td {
+  padding: 7px 12px;
+  border: 1px solid var(--color-border-subtle);
+  text-align: left;
+}
+
+.ido-block th {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.ido-block input[type="checkbox"] {
+  margin-right: 0.5em;
+  accent-color: var(--color-accent);
+}
+
+/* The raw-markdown textarea shown for the active block.
+   field-sizing: content makes the textarea grow with its content (Chrome 123+ /
+   modern WebView2); min-height provides a comfortable baseline on older engines.
+   Soft focus ring (box-shadow) rather than a hard accent border. */
+.ido-block-input {
+  display: block;
+  width: 100%;
+  min-height: 3em;
+  field-sizing: content;
+  padding: 6px 8px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  outline: none;
+  resize: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-primary);
+  transition: box-shadow var(--dur-fast) var(--ease-standard),
+    background var(--dur-fast) var(--ease-standard);
+  margin-bottom: 0.1em;
+}
+
+.ido-block-input:focus {
+  background: var(--color-bg);
+  border-color: var(--color-border-subtle);
+  box-shadow: 0 0 0 2.5px var(--color-accent-soft);
+}
+
+/* Full-height variant for the empty-document textarea. */
+.ido-block-input-full {
+  min-height: 20rem;
+}
+
+/* Placeholder shown when note is open but empty (click to start editing). */
+.ido-block-placeholder {
+  cursor: text;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui);
+  font-size: var(--text-body-lg);
+  color: var(--color-text-muted);
+}
+
+.ido-block-placeholder:hover {
+  background: var(--color-bg-subtle);
+}
+
+/* Dimmer version shown when no note is selected. */
+.ido-block-placeholder-idle {
+  cursor: default;
+  margin-top: var(--space-8);
+  text-align: center;
+  font-size: var(--text-body);
+  color: var(--color-text-muted);
+  opacity: 0.6;
+}
+
+/* ================================================= math (MathML output) === */
+
+/* Display math: centre with breathing room. Do NOT set display:block here —
+   the browser UA stylesheet maps math[display="block"] → display:block math,
+   and overriding with display:block removes the "math" inner display type,
+   which breaks MathML layout in Chromium / WebView2. */
+.markdown-body math[display="block"],
+.ido-block math[display="block"] {
+  margin: 0.9em auto;
+  text-align: center;
+  overflow-x: auto;
+}
+
+/* Slightly larger math font to match the prose size. */
+.markdown-body math,
+.ido-block math {
+  font-size: 1.05em;
 }

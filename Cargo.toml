@@ -9,9 +9,18 @@ leptos = { version = "0.8", features = ["csr"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
+# Reading the clicked anchor in the rendered markdown (link interception).
+# HtmlTextAreaElement: cursor position for ↑/↓ block navigation and Backspace-merge.
+web-sys = { version = "0.3", features = ["Element", "HtmlTextAreaElement"] }
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 console_error_panic_hook = "0.1.7"
+# Markdown → HTML for the reading view (pure Rust, WASM-friendly).
+pulldown-cmark = { version = "0.13", default-features = false, features = [
+    "html",
+] }
+# LaTeX → MathML for inline ($…$) and display ($$…$$) math (pure Rust, WASM-friendly).
+latex2mathml = "0.2"
 # Shared latent. UI — pinned git dep; use a [patch] override for local dev:
 latent-ui = { git = "https://github.com/latent-foundation/latent-ui", tag = "v0.1.0" }
 

@@ -107,6 +107,11 @@ struct WindowArg {
     resizable: bool,
 }
 
+#[derive(Serialize)]
+struct UrlArg {
+    url: String,
+}
+
 // --- wells -----------------------------------------------------------------
 
 /// Wells remembered as recently opened, most-recent first.
@@ -226,4 +231,11 @@ pub async fn show_window() {
 /// / `win_close`).
 pub async fn window_command(cmd: &str) {
     let _ = call_bare(cmd).await;
+}
+
+// --- external --------------------------------------------------------------
+
+/// Open `url` in the OS default handler (browser, mail client, …).
+pub async fn open_external(url: String) {
+    let _ = call("open_external", &UrlArg { url }).await;
 }

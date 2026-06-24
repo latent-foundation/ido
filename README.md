@@ -11,9 +11,18 @@ Tauri + Leptos (Rust).
 
 ## Status
 
-Early. Today ido is a deliberately bare local-first markdown editor - list, open,
-edit, create, autosave. Markdown rendering, links, search, and the wiki / task / goal
-surfaces are still to come.
+Early, but functional. Today ido has two screens — a **launch screen** (open / create
+a well) and an **editor** with three modes:
+
+- **Source** — raw markdown textarea, autosaves on every keystroke.
+- **Live** — block live-preview. Each top-level markdown block renders as HTML; click
+  to open it in a textarea. Press Enter on a blank line to split or append a block,
+  Backspace at column 0 to merge with the block above, and ↑/↓ to navigate.
+- **Reading** — fully rendered, read-only. Links open in the OS browser.
+
+Inline math (`$…$`) and display math (`$$…$$`) render to MathML. The note tree
+supports create, rename, delete, and drag-to-move. Not yet built: search, wikilinks,
+and the wiki / task / goal surfaces ido is ultimately aiming at.
 
 ## Develop
 
