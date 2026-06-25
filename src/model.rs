@@ -12,6 +12,15 @@ pub struct WellRef {
     pub name: String,
 }
 
+/// Filesystem timestamps for a note, as Unix-epoch milliseconds.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct NoteMeta {
+    /// Creation (birth) time — `None` when the platform doesn't record it.
+    pub created: Option<u64>,
+    /// Last-modified time.
+    pub modified: Option<u64>,
+}
+
 /// One entry in a well's tree: a folder (with `children`) or a note.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TreeNode {

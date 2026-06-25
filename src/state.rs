@@ -12,7 +12,7 @@ use leptos::task::spawn_local;
 
 use crate::blocks::{self, Block};
 use crate::ipc;
-use crate::model::{TreeNode, WellRef};
+use crate::model::{NoteMeta, TreeNode, WellRef};
 
 /// Window size for the launcher (fixed, sized to its content).
 pub const LAUNCH_SIZE: (f64, f64) = (400.0, 520.0);
@@ -84,6 +84,8 @@ pub struct State {
     pub new_parent: RwSignal<Option<String>>,
     /// The active note's full markdown source (source of truth for both modes).
     pub content: RwSignal<String>,
+    /// The active note's filesystem timestamps, shown in the reading view.
+    pub meta: RwSignal<Option<NoteMeta>>,
     /// Top-level blocks segmented from `content`; re-derived on open and commit.
     pub blocks: RwSignal<Vec<Block>>,
     /// Index of the block currently being edited in Live mode (`None` = no block active).
@@ -115,6 +117,7 @@ impl State {
             new_name: RwSignal::new(String::new()),
             new_parent: RwSignal::new(None),
             content: RwSignal::new(String::new()),
+            meta: RwSignal::new(None),
             blocks: RwSignal::new(Vec::new()),
             active_block: RwSignal::new(None),
             mode: RwSignal::new(Mode::Live),
@@ -151,6 +154,7 @@ impl State {
         self.creating.set(false);
         self.active.set(None);
         self.content.set(String::new());
+        self.meta.set(None);
         self.blocks.set(Vec::new());
         self.active_block.set(None);
         self.mode.set(Mode::Live);
@@ -166,6 +170,7 @@ impl State {
         self.well.set(None);
         self.active.set(None);
         self.content.set(String::new());
+        self.meta.set(None);
         self.blocks.set(Vec::new());
         self.active_block.set(None);
         self.tree.set(Vec::new());
@@ -239,8 +244,9 @@ impl State {
         };
         self.active.set(Some(id.clone()));
         self.active_block.set(None);
+        self.meta.set(None);
         spawn_local(async move {
-            let body = ipc::read_note(w.path, id).await;
+            let body = ipc::read_note(w.path.clone(), id.clone()).await;
             let segs = blocks::segment(&body);
             let initial_block = if body.trim().is_empty() {
                 Some(0)
@@ -255,6 +261,7 @@ impl State {
             if let Some(ta) = self.source_editor.get_untracked() {
                 ta.set_value(&body);
             }
+            self.meta.set(ipc::note_meta(w.path, id).await);
         });
     }
 
@@ -476,6 +483,7 @@ impl State {
                 if gone {
                     self.active.set(None);
                     self.content.set(String::new());
+                    self.meta.set(None);
                     self.blocks.set(Vec::new());
                     self.active_block.set(None);
                 }

@@ -35,6 +35,7 @@ pub fn run() {
             wells::create_well,
             notes::list_tree,
             notes::read_note,
+            notes::note_meta,
             notes::write_note,
             notes::create_note,
             notes::create_folder,

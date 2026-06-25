@@ -13,7 +13,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-use crate::model::{TreeNode, WellRef};
+use crate::model::{NoteMeta, TreeNode, WellRef};
 
 #[wasm_bindgen]
 extern "C" {
@@ -151,6 +151,11 @@ pub async fn read_note(well: String, id: String) -> String {
         .ok()
         .and_then(|js| js.as_string())
         .unwrap_or_default()
+}
+
+/// A note's filesystem timestamps; `None` on error.
+pub async fn note_meta(well: String, id: String) -> Option<NoteMeta> {
+    deser(call("note_meta", &ReadArg { well, id }).await)
 }
 
 /// Persist a note's body.

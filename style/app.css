@@ -180,14 +180,35 @@ body {
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
-.ido-editor-title {
+.ido-editor-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: var(--tracking-mono);
-  color: var(--color-text-muted);
   white-space: nowrap;
   overflow: hidden;
+}
+
+.ido-crumb {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--color-text-muted);
+}
+
+/* The note itself — one tone brighter than its folder ancestors. */
+.ido-crumb-leaf {
+  flex: 0 1 auto;
+  color: var(--color-text-secondary);
+}
+
+.ido-crumb-sep {
+  flex: none;
+  color: var(--color-text-muted);
+  opacity: 0.55;
 }
 
 /* Three-way mode toggle (Source / Live / Reading) */
@@ -358,6 +379,40 @@ body {
 }
 
 /* rendered markdown (reading view) ===================================== */
+
+/* The reading column frames the metadata row + rendered body together. */
+.ido-reading {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 48px 48px 80px;
+}
+
+/* Standalone, .markdown-body owns its box; inside the reading column the
+   wrapper owns width + padding, so shed it here to avoid doubling up. */
+.ido-reading .markdown-body {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Folder + creation date, sitting quietly above the note. */
+.ido-note-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 28px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+}
+
+.ido-note-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .markdown-body {
   max-width: 720px;
   margin: 0 auto;
@@ -522,6 +577,7 @@ body {
 .ido-well-switch {
   display: inline-flex;
   align-items: baseline;
+  gap: 7px;
   padding: 0;
   background: none;
   border: none;
@@ -530,6 +586,10 @@ body {
 
 .ido-well-switch:hover .ido-wordmark {
   color: var(--color-accent);
+}
+
+.ido-well-switch:hover .ido-kanji {
+  color: var(--color-text-secondary);
 }
 
 .ido-well-name {
@@ -1190,14 +1250,31 @@ body {
   background: var(--color-bg-subtle);
 }
 
-/* Dimmer version shown when no note is selected. */
-.ido-block-placeholder-idle {
-  cursor: default;
-  margin-top: var(--space-8);
+/* Quiet empty state shown when no note is selected — the 井戸 mark + a hint. */
+.ido-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  min-height: 60vh;
   text-align: center;
-  font-size: var(--text-body);
+  user-select: none;
+}
+
+.ido-empty-mark {
+  font-size: 56px;
+  line-height: 1;
+  letter-spacing: 0.08em;
   color: var(--color-text-muted);
-  opacity: 0.6;
+  opacity: 0.28;
+}
+
+.ido-empty-text {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
 }
 
 /* ================================================= math (MathML output) === */
