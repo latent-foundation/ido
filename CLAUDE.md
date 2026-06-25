@@ -31,9 +31,10 @@ Two crates in one Cargo workspace:
 - root crate **`ido-ui`** — the Leptos frontend; `index.html` is the Trunk entry point.
 - **`src-tauri/`** — the Rust backend and the **local-first store**. The only disk access is the
   Tauri commands: `recent_wells` / `pick_folder` / `open_well` / `create_well` (wells), and
-  `list_tree` / `read_note` / `write_note` / `create_note` / `create_folder` / `rename_entry` /
-  `delete_entry` / `move_entry` (notes & folders, scoped to a well path — a note's **name is its
-  file name**, independent of body text). The folder picker uses `tauri-plugin-dialog` **from
+  `list_tree` / `read_note` / `note_meta` / `write_note` / `create_note` / `create_folder` /
+  `rename_entry` / `delete_entry` / `move_entry` (notes & folders, scoped to a well path — a
+  note's **name is its file name**, independent of body text; `note_meta` returns the file's
+  created/modified timestamps as epoch millis). The folder picker uses `tauri-plugin-dialog` **from
   Rust**, so no capability entry is needed; recent wells are remembered in
   `<app_data_dir>/wells.json`. Window chrome is custom (native decorations off), driven from Rust:
   `apply_window` (size + resizable), `show_window`, and `win_minimize` / `win_toggle_maximize` /
@@ -178,9 +179,11 @@ to the well root).
     block ranges are stored using `trim_end` length to avoid eating inter-block separators on
     splice.
 
-- **Reading** (eye 👁): fully rendered, read-only. `<a>` clicks are intercepted and routed to
-  `open_external` (OS browser) — navigating the webview directly would white-screen the app. This
-  handler is where internal `[[wikilinks]]` will branch later.
+- **Reading** (eye 👁): fully rendered, read-only, under a quiet metadata row (`NoteMetaRow` —
+  the note's immediate folder + creation date from `note_meta`, formatted client-side via
+  `js_sys::Date`). `<a>` clicks are intercepted and routed to `open_external` (OS browser) —
+  navigating the webview directly would white-screen the app. This handler is where internal
+  `[[wikilinks]]` will branch later.
 
 **Math** — both `markdown.rs` and `blocks.rs` enable `Options::ENABLE_MATH`. `pulldown-cmark`
 emits `Event::InlineMath` (`$…$`) and `Event::DisplayMath` (`$$…$$`); the `transform` function

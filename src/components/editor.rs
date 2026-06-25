@@ -18,7 +18,7 @@
 //! - Inline live-preview inside the active block (Increment 4 stretch goal).
 
 use leptos::prelude::*;
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{JsCast, JsValue};
 use web_sys::HtmlTextAreaElement;
 
 use crate::components::tree::Tree;
@@ -39,6 +39,7 @@ pub fn Editor() -> impl IntoView {
                     on:click=move |_| state.leave_well()
                 >
                     <span class="ido-wordmark">"ido"</span>
+                    <span class="ido-kanji">"井戸"</span>
                 </button>
                 <span class="ido-well-name">
                     {move || state.well.get().map(|w| w.name).unwrap_or_default()}
@@ -101,15 +102,34 @@ pub fn Editor() -> impl IntoView {
 
         <main class="ido-main">
             <div class="ido-editor-head">
-                <span class="ido-editor-title">
+                <div class="ido-editor-crumbs">
                     {move || {
                         state
                             .active
                             .get()
-                            .map(|id| id.rsplit('/').next().unwrap_or(&id).to_string())
-                            .unwrap_or_default()
+                            .map(|id| {
+                                let segs: Vec<String> = id.split('/').map(String::from).collect();
+                                let last = segs.len().saturating_sub(1);
+                                segs.into_iter()
+                                    .enumerate()
+                                    .map(|(i, seg)| {
+                                        let class = if i == last {
+                                            "ido-crumb ido-crumb-leaf"
+                                        } else {
+                                            "ido-crumb"
+                                        };
+                                        view! {
+                                            {(i > 0)
+                                                .then(|| {
+                                                    view! { <span class="ido-crumb-sep">"›"</span> }
+                                                })}
+                                            <span class=class>{seg}</span>
+                                        }
+                                    })
+                                    .collect_view()
+                            })
                     }}
-                </span>
+                </div>
 
                 // Three-way mode toggle + help hint.
                 <div class="ido-head-controls">
@@ -149,22 +169,25 @@ pub fn Editor() -> impl IntoView {
                     Mode::Live => view! { <BlockEditor /> }.into_any(),
                     Mode::Reading => {
                         view! {
-                            <div
-                                class="markdown-body"
-                                on:click=move |ev| {
-                                    let anchor = ev
-                                        .target()
-                                        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-                                        .and_then(|el| el.closest("a").ok().flatten());
-                                    if let Some(a) = anchor {
-                                        if let Some(href) = a.get_attribute("href") {
-                                            ev.prevent_default();
-                                            state.open_link(href);
+                            <div class="ido-reading">
+                                <NoteMetaRow />
+                                <div
+                                    class="markdown-body"
+                                    on:click=move |ev| {
+                                        let anchor = ev
+                                            .target()
+                                            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                                            .and_then(|el| el.closest("a").ok().flatten());
+                                        if let Some(a) = anchor {
+                                            if let Some(href) = a.get_attribute("href") {
+                                                ev.prevent_default();
+                                                state.open_link(href);
+                                            }
                                         }
                                     }
-                                }
-                                inner_html=move || markdown::render(&state.content.get())
-                            />
+                                    inner_html=move || markdown::render(&state.content.get())
+                                />
+                            </div>
                         }
                             .into_any()
                     }
@@ -213,6 +236,59 @@ fn HelpTip() -> impl IntoView {
     }
 }
 
+// ═══════════════════════════════════════════════════ Reading metadata ═════════
+
+/// Format Unix-epoch milliseconds as a local `YYYY-MM-DD` date.
+fn fmt_date(millis: u64) -> String {
+    let d = js_sys::Date::new(&JsValue::from_f64(millis as f64));
+    format!(
+        "{:04}-{:02}-{:02}",
+        d.get_full_year(),
+        d.get_month() + 1,
+        d.get_date(),
+    )
+}
+
+/// Reading-view header: the note's immediate folder and creation date, in muted
+/// mono. Renders nothing until a note is open, and only the parts it has (root
+/// notes have no folder; some filesystems record no creation time).
+#[component]
+fn NoteMetaRow() -> impl IntoView {
+    let state = expect_context::<State>();
+    view! {
+        {move || {
+            let id = state.active.get()?;
+            let parent = crate::state::parent_of(&id);
+            let folder = parent.rsplit('/').next().unwrap_or(&parent).to_string();
+            let created = state.meta.get().and_then(|m| m.created).map(fmt_date);
+            (!folder.is_empty() || created.is_some())
+                .then(|| {
+                    view! {
+                        <div class="ido-note-meta">
+                            {(!folder.is_empty())
+                                .then(|| {
+                                    view! {
+                                        <span class="ido-note-meta-item">
+                                            <Icon name="folder" size=12 />
+                                            {folder}
+                                        </span>
+                                    }
+                                })}
+                            {created
+                                .map(|d| {
+                                    view! {
+                                        <span class="ido-note-meta-item">
+                                            {format!("created {d}")}
+                                        </span>
+                                    }
+                                })}
+                        </div>
+                    }
+                })
+        }}
+    }
+}
+
 // ══════════════════════════════════════════════════════ Source mode ══════════
 
 /// Full raw-markdown `<textarea>`, uncontrolled. Seeded via the NodeRef stored in
@@ -238,7 +314,7 @@ fn SourceEditor() -> impl IntoView {
             node_ref=state.source_editor
             on:input=move |ev| state.update_source(event_target_value(&ev))
             prop:disabled=move || state.active.get().is_none()
-            placeholder="Select a note, or create one to begin writing…"
+            placeholder="select a note, or create one to begin writing"
         ></textarea>
     }
 }
@@ -569,8 +645,9 @@ fn EmptyBlock() -> impl IntoView {
                     .into_any()
             } else {
                 view! {
-                    <div class="ido-block-placeholder ido-block-placeholder-idle">
-                        "Select a note, or create one to begin writing…"
+                    <div class="ido-empty">
+                        <span class="ido-empty-mark">"井戸"</span>
+                        <span class="ido-empty-text">"select a note, or create one to begin"</span>
                     </div>
                 }
                     .into_any()

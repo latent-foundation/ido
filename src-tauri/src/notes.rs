@@ -6,8 +6,9 @@
 
 use std::fs;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::model::TreeNode;
+use crate::model::{NoteMeta, TreeNode};
 use crate::paths::{join_rel, note_path, parent_of, rel_path, unique_name, valid_name, well_join};
 
 /// Recursively read `dir` into [`TreeNode`]s (folders first, then notes, each
@@ -64,6 +65,23 @@ pub fn list_tree(well: String) -> Result<Vec<TreeNode>, String> {
 #[tauri::command]
 pub fn read_note(well: String, id: String) -> Result<String, String> {
     fs::read_to_string(note_path(&well, &id)).map_err(|e| e.to_string())
+}
+
+/// `SystemTime` as Unix-epoch milliseconds, or `None` for pre-epoch times.
+fn to_millis(t: SystemTime) -> Option<u64> {
+    t.duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_millis() as u64)
+}
+
+/// A note's filesystem timestamps (creation + last-modified).
+#[tauri::command]
+pub fn note_meta(well: String, id: String) -> Result<NoteMeta, String> {
+    let meta = fs::metadata(note_path(&well, &id)).map_err(|e| e.to_string())?;
+    Ok(NoteMeta {
+        created: meta.created().ok().and_then(to_millis),
+        modified: meta.modified().ok().and_then(to_millis),
+    })
 }
 
 /// Write a note's markdown body, creating any missing parent folders.
@@ -203,6 +221,18 @@ mod tests {
         // the body changed but the name (file stem) did not
         let tree = list_tree(w.clone()).unwrap();
         assert_eq!(tree.iter().find(|n| n.path == id).unwrap().name, "untitled");
+    }
+
+    #[test]
+    fn note_meta_reports_timestamps() {
+        let (_d, w) = well();
+        let id = create_note(w.clone(), String::new()).unwrap();
+        let meta = note_meta(w.clone(), id).unwrap();
+        // `modified` is universally available; `created` is best-effort (some
+        // filesystems don't record a birth time, so it may be `None`).
+        assert!(meta.modified.is_some());
+        // A missing note is an error, not empty metadata.
+        assert!(note_meta(w, "nope".into()).is_err());
     }
 
     #[test]
