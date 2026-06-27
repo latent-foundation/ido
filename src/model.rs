@@ -21,6 +21,16 @@ pub struct NoteMeta {
     pub modified: Option<u64>,
 }
 
+/// The per-well editor session — open tabs (by note id) + the active index.
+/// Mirrors the backend `Session`; a rebuildable cache in `.ido/session.toml`.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Session {
+    /// Open tabs as note ids, in strip order.
+    pub tabs: Vec<String>,
+    /// Index of the active tab, if any.
+    pub active: Option<usize>,
+}
+
 /// One entry in a well's tree: a folder (with `children`) or a note.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TreeNode {

@@ -13,7 +13,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-use crate::model::{NoteMeta, TreeNode, WellRef};
+use crate::model::{NoteMeta, Session, TreeNode, WellRef};
 
 #[wasm_bindgen]
 extern "C" {
@@ -112,6 +112,13 @@ struct UrlArg {
     url: String,
 }
 
+#[derive(Serialize)]
+struct WriteSessionArg {
+    well: String,
+    tabs: Vec<String>,
+    active: Option<usize>,
+}
+
 // --- wells -----------------------------------------------------------------
 
 /// Wells remembered as recently opened, most-recent first.
@@ -135,6 +142,12 @@ pub async fn open_well(path: String) -> Option<WellRef> {
 /// Create `parent/name` as a new well; `None` on error.
 pub async fn create_well(parent: String, name: String) -> Option<WellRef> {
     deser(call("create_well", &CreateWellArg { parent, name }).await)
+}
+
+/// Ensure `well` has the sectioned layout (`notes/ tasks/ wiki/ .ido/`),
+/// migrating a legacy flat well on first open. Idempotent and fire-and-forget.
+pub async fn migrate_well(well: String) {
+    let _ = call("migrate_well", &WellArg { well }).await;
 }
 
 // --- notes & folders -------------------------------------------------------
@@ -210,6 +223,18 @@ pub async fn move_entry(well: String, id: String, is_dir: bool, dest: String) ->
         )
         .await,
     )
+}
+
+// --- session ---------------------------------------------------------------
+
+/// A well's saved open-tabs session; `None` on error (treated as empty).
+pub async fn read_session(well: String) -> Option<Session> {
+    deser(call("read_session", &WellArg { well }).await)
+}
+
+/// Persist a well's open tabs (note ids) + active index. Fire-and-forget.
+pub async fn write_session(well: String, tabs: Vec<String>, active: Option<usize>) {
+    let _ = call("write_session", &WriteSessionArg { well, tabs, active }).await;
 }
 
 // --- window ----------------------------------------------------------------

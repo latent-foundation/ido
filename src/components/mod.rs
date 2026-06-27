@@ -4,6 +4,9 @@
 
 pub mod editor;
 pub mod launch;
+pub mod rail;
 pub mod settings;
+pub mod tabs;
 pub mod titlebar;
 pub mod tree;
+pub mod workspace;

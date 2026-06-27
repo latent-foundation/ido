@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::model::WellRef;
+use crate::model::{Section, WellRef};
 
 /// Build a [`WellRef`] from an absolute well path (name = the folder's own name).
 pub(crate) fn well_ref(path: &str) -> WellRef {
@@ -19,6 +19,11 @@ pub(crate) fn well_ref(path: &str) -> WellRef {
         path: path.to_string(),
         name,
     }
+}
+
+/// Absolute path of the folder backing `section` within `well`.
+pub(crate) fn section_dir(well: &str, section: Section) -> PathBuf {
+    well_join(well, section.dir())
 }
 
 /// `well/rel`, treating an empty `rel` as the well root.
@@ -69,9 +74,10 @@ pub(crate) fn valid_name(name: &str) -> Result<&str, String> {
     Ok(name)
 }
 
-/// Absolute path of the markdown file backing note id `id` in `well`.
-pub(crate) fn note_path(well: &str, id: &str) -> PathBuf {
-    Path::new(well).join(format!("{id}.md"))
+/// Absolute path of the markdown file backing note id `id`, under `base`
+/// (a section's folder, e.g. `well/notes`).
+pub(crate) fn note_path(base: &Path, id: &str) -> PathBuf {
+    base.join(format!("{id}.md"))
 }
 
 /// A name like `stem`, `stem-2`, … not yet taken in `dir` (with `.ext` if given).

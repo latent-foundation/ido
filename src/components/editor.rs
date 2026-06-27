@@ -21,6 +21,7 @@ use leptos::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::HtmlTextAreaElement;
 
+use crate::components::tabs::TabStrip;
 use crate::components::tree::Tree;
 use crate::icon::Icon;
 use crate::markdown;
@@ -32,18 +33,9 @@ pub fn Editor() -> impl IntoView {
     let state = expect_context::<State>();
     view! {
         <aside class="ido-sidebar">
-            <div class="ido-brand">
-                <button
-                    class="ido-well-switch"
-                    title="Switch well"
-                    on:click=move |_| state.leave_well()
-                >
-                    <span class="ido-wordmark">"ido"</span>
-                    <span class="ido-kanji">"井戸"</span>
-                </button>
-                <span class="ido-well-name">
-                    {move || state.well.get().map(|w| w.name).unwrap_or_default()}
-                </span>
+            <div class="ido-section-head">
+                <Icon name="file-text" size=14 />
+                <span class="ido-section-label">"notes"</span>
             </div>
 
             <div class="ido-toolbar">
@@ -91,16 +83,10 @@ pub fn Editor() -> impl IntoView {
             >
                 {move || view! { <Tree nodes=state.tree.get() depth=0 /> }}
             </nav>
-
-            <div class="ido-status">
-                <button class="ido-settings-btn" on:click=move |_| state.settings_open.set(true)>
-                    <Icon name="settings" size=15 />
-                    "settings"
-                </button>
-            </div>
         </aside>
 
         <main class="ido-main">
+            <TabStrip />
             <div class="ido-editor-head">
                 <div class="ido-editor-crumbs">
                     {move || {
