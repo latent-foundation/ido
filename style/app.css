@@ -25,10 +25,23 @@ body {
   height: 30px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   background: var(--color-bg);
   border-bottom: 1px solid var(--color-border-subtle);
   user-select: none;
+}
+
+/* The open well's name — quiet metadata, visible across every section. */
+.ido-title-well {
+  min-width: 0;
+  padding-left: 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ido-titlebar-controls {
@@ -66,6 +79,75 @@ body {
   width: 100%;
 }
 
+/* =============================================================== rail === */
+/* Far-left section switcher: app mark, the three sections, settings. */
+.ido-rail {
+  flex: none;
+  width: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 10px 0;
+  background: var(--color-bg);
+  border-right: 1px solid var(--color-border-subtle);
+}
+
+.ido-rail-mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 32px;
+  margin-bottom: 6px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-rail-mark:hover {
+  color: var(--color-accent);
+}
+
+.ido-rail-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.ido-rail-item {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--color-text-muted);
+  transition: background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-rail-item:hover {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+.ido-rail-item.active {
+  background: var(--color-accent-soft);
+  color: var(--color-text-primary);
+}
+
+/* settings is the last child — float it to the bottom of the rail */
+.ido-rail > .ido-rail-item:last-child {
+  margin-top: auto;
+}
+
 /* ============================================================= sidebar === */
 .ido-sidebar {
   width: 264px;
@@ -82,6 +164,23 @@ body {
   gap: var(--space-3);
   padding: 20px 20px 16px;
   border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* section header — the active section's name, atop its sidebar */
+.ido-section-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-text-muted);
+}
+
+.ido-section-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-secondary);
 }
 
 .ido-wordmark {
@@ -167,6 +266,97 @@ body {
   display: flex;
   flex-direction: column;
   background: var(--color-bg);
+}
+
+/* ============================================================ tab strip === */
+.ido-tabs {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  height: 34px;
+  padding: 0 6px;
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border-subtle);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ido-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.ido-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 0 6px 0 10px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-tab:hover {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+}
+
+.ido-tab.active {
+  background: var(--color-bg-subtle);
+  border-bottom-color: var(--color-accent);
+  color: var(--color-text-primary);
+}
+
+.ido-tab.dragging {
+  opacity: 0.5;
+}
+
+.ido-tab-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-muted);
+}
+
+.ido-tab-name {
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ido-tab-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text-muted);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-standard),
+    background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-tab:hover .ido-tab-close,
+.ido-tab.active .ido-tab-close {
+  opacity: 1;
+}
+
+.ido-tab-close:hover {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
 }
 
 .ido-editor-head {
@@ -571,35 +761,6 @@ body {
 .markdown-body img {
   max-width: 100%;
   border-radius: var(--radius-md);
-}
-
-/* well switch (sidebar brand) ------------------------------------------- */
-.ido-well-switch {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 7px;
-  padding: 0;
-  background: none;
-  border: none;
-  cursor: pointer;
-}
-
-.ido-well-switch:hover .ido-wordmark {
-  color: var(--color-accent);
-}
-
-.ido-well-switch:hover .ido-kanji {
-  color: var(--color-text-secondary);
-}
-
-.ido-well-name {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: var(--tracking-mono);
-  color: var(--color-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* ===================================================== launch screen === */

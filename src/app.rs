@@ -4,10 +4,10 @@
 use latent_ui::theme::{initial_theme, setup_theme_effect};
 use leptos::prelude::*;
 
-use crate::components::editor::Editor;
 use crate::components::launch::Launch;
 use crate::components::settings::Settings;
 use crate::components::titlebar::TitleBar;
+use crate::components::workspace::Workspace;
 use crate::state::State;
 
 /// The root component. Provides the theme signal (read by `ThemeToggle`) and the
@@ -33,7 +33,7 @@ pub fn App() -> impl IntoView {
                     if state.well.get().is_none() {
                         view! { <Launch /> }.into_any()
                     } else {
-                        view! { <Editor /> }.into_any()
+                        view! { <Workspace /> }.into_any()
                     }
                 }}
             </div>

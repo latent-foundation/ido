@@ -8,8 +8,10 @@ use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::model::{NoteMeta, TreeNode};
-use crate::paths::{join_rel, note_path, parent_of, rel_path, unique_name, valid_name, well_join};
+use crate::model::{NoteMeta, Section, TreeNode};
+use crate::paths::{
+    join_rel, note_path, parent_of, rel_path, section_dir, unique_name, valid_name,
+};
 
 /// Recursively read `dir` into [`TreeNode`]s (folders first, then notes, each
 /// alphabetical). Hidden entries (dot-prefixed) and non-`.md` files are skipped.
@@ -54,17 +56,18 @@ fn build_tree(dir: &Path, well: &Path) -> Vec<TreeNode> {
     dirs.into_iter().chain(files).collect()
 }
 
-/// The well's whole tree of folders and notes.
+/// The notes section's whole tree of folders and notes.
 #[tauri::command]
 pub fn list_tree(well: String) -> Result<Vec<TreeNode>, String> {
-    let root = Path::new(&well);
-    Ok(build_tree(root, root))
+    let root = section_dir(&well, Section::Notes);
+    Ok(build_tree(&root, &root))
 }
 
 /// Read a note's markdown body.
 #[tauri::command]
 pub fn read_note(well: String, id: String) -> Result<String, String> {
-    fs::read_to_string(note_path(&well, &id)).map_err(|e| e.to_string())
+    let root = section_dir(&well, Section::Notes);
+    fs::read_to_string(note_path(&root, &id)).map_err(|e| e.to_string())
 }
 
 /// `SystemTime` as Unix-epoch milliseconds, or `None` for pre-epoch times.
@@ -77,7 +80,8 @@ fn to_millis(t: SystemTime) -> Option<u64> {
 /// A note's filesystem timestamps (creation + last-modified).
 #[tauri::command]
 pub fn note_meta(well: String, id: String) -> Result<NoteMeta, String> {
-    let meta = fs::metadata(note_path(&well, &id)).map_err(|e| e.to_string())?;
+    let root = section_dir(&well, Section::Notes);
+    let meta = fs::metadata(note_path(&root, &id)).map_err(|e| e.to_string())?;
     Ok(NoteMeta {
         created: meta.created().ok().and_then(to_millis),
         modified: meta.modified().ok().and_then(to_millis),
@@ -87,7 +91,8 @@ pub fn note_meta(well: String, id: String) -> Result<NoteMeta, String> {
 /// Write a note's markdown body, creating any missing parent folders.
 #[tauri::command]
 pub fn write_note(well: String, id: String, content: String) -> Result<(), String> {
-    let path = note_path(&well, &id);
+    let root = section_dir(&well, Section::Notes);
+    let path = note_path(&root, &id);
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
@@ -97,7 +102,12 @@ pub fn write_note(well: String, id: String, content: String) -> Result<(), Strin
 /// Create a uniquely-named empty note in `parent` (`""` = root). Returns its id.
 #[tauri::command]
 pub fn create_note(well: String, parent: String) -> Result<String, String> {
-    let dir = well_join(&well, &parent);
+    let root = section_dir(&well, Section::Notes);
+    let dir = if parent.is_empty() {
+        root
+    } else {
+        root.join(&parent)
+    };
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let stem = unique_name(&dir, "untitled", "md");
     fs::write(dir.join(format!("{stem}.md")), "").map_err(|e| e.to_string())?;
@@ -107,7 +117,12 @@ pub fn create_note(well: String, parent: String) -> Result<String, String> {
 /// Create a uniquely-named folder in `parent` (`""` = root). Returns its id.
 #[tauri::command]
 pub fn create_folder(well: String, parent: String) -> Result<String, String> {
-    let base = well_join(&well, &parent);
+    let root = section_dir(&well, Section::Notes);
+    let base = if parent.is_empty() {
+        root
+    } else {
+        root.join(&parent)
+    };
     let name = unique_name(&base, "new folder", "");
     fs::create_dir_all(base.join(&name)).map_err(|e| e.to_string())?;
     Ok(join_rel(&parent, &name))
@@ -126,7 +141,7 @@ pub fn rename_entry(
     if new_id == id {
         return Ok(id);
     }
-    let root = Path::new(&well);
+    let root = section_dir(&well, Section::Notes);
     let (old, new) = if is_dir {
         (root.join(&id), root.join(&new_id))
     } else {
@@ -146,7 +161,7 @@ pub fn rename_entry(
 /// are never destroyed implicitly.
 #[tauri::command]
 pub fn delete_entry(well: String, id: String, is_dir: bool) -> Result<(), String> {
-    let root = Path::new(&well);
+    let root = section_dir(&well, Section::Notes);
     if is_dir {
         fs::remove_dir(root.join(&id)).map_err(|_| "folder isn't empty".to_string())
     } else {
@@ -166,7 +181,7 @@ pub fn move_entry(well: String, id: String, is_dir: bool, dest: String) -> Resul
     if is_dir && (dest == id || dest.starts_with(&format!("{id}/"))) {
         return Err("can't move a folder into itself".into());
     }
-    let root = Path::new(&well);
+    let root = section_dir(&well, Section::Notes);
     let (old, new) = if is_dir {
         (root.join(&id), root.join(&new_id))
     } else {

@@ -8,8 +8,9 @@
 //! - [`model`] — shapes shared with the frontend (`WellRef`, `TreeNode`)
 //! - [`paths`] — pure id/name helpers (unit-tested)
 //! - [`registry`] — the recent-wells list (`wells.json`)
-//! - [`wells`] — opening / creating wells + the folder picker
+//! - [`wells`] — opening / creating / migrating wells + the folder picker
 //! - [`notes`] — the tree and note/folder CRUD (unit-tested)
+//! - [`session`] — the per-well open-tabs session (`.ido/session.toml`)
 //! - [`window`] — custom-chrome window control
 //! - [`external`] — opening URLs in the OS
 
@@ -18,6 +19,7 @@ mod model;
 mod notes;
 mod paths;
 mod registry;
+mod session;
 mod wells;
 mod window;
 
@@ -33,6 +35,7 @@ pub fn run() {
             wells::pick_folder,
             wells::open_well,
             wells::create_well,
+            wells::migrate_well,
             notes::list_tree,
             notes::read_note,
             notes::note_meta,
@@ -42,6 +45,8 @@ pub fn run() {
             notes::rename_entry,
             notes::delete_entry,
             notes::move_entry,
+            session::read_session,
+            session::write_session,
             window::apply_window,
             window::show_window,
             window::win_minimize,

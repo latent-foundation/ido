@@ -24,7 +24,8 @@ tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["sync"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `.ido/well.toml` well manifest (read/write); see docs/well-spaces-plan.md §12.
+toml = "1.1.2+spec-1.1.0"
 
 [dev-dependencies]
 tempfile = "3"
-

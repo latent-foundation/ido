@@ -7,13 +7,17 @@ use crate::icon::Icon;
 use crate::state::State;
 
 /// The title bar. The bar itself is a `data-tauri-drag-region` (drag to move the
-/// window); the controls call Rust window commands. Maximize only shows in the
-/// editor, where the window is resizable.
+/// window); the controls call Rust window commands. The open well's name sits on
+/// the left, visible across every section. Maximize only shows in the editor,
+/// where the window is resizable.
 #[component]
 pub fn TitleBar() -> impl IntoView {
     let state = expect_context::<State>();
     view! {
         <div class="ido-titlebar" data-tauri-drag-region="">
+            <span class="ido-title-well" data-tauri-drag-region="">
+                {move || state.well.get().map(|w| w.name).unwrap_or_default()}
+            </span>
             <div class="ido-titlebar-controls">
                 <button
                     class="ido-win-btn"
