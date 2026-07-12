@@ -1,5 +1,5 @@
-//! The settings modal — currently theme and the open well's path; a home for
-//! preferences as they appear.
+//! The settings modal — theme, the open well's path, and the task board's
+//! columns; a home for preferences as they appear.
 
 use latent_ui::ThemeToggle;
 use leptos::prelude::*;
@@ -45,6 +45,73 @@ pub fn Settings() -> impl IntoView {
                                         }}
                                     </span>
                                 </div>
+                                {move || {
+                                    state
+                                        .well
+                                        .get()
+                                        .map(|_| {
+                                            view! {
+                                                <div class="ido-settings-row ido-settings-row-stack">
+                                                    <span class="ido-settings-label">"board columns"</span>
+                                                    <input
+                                                        class="ido-settings-input"
+                                                        prop:value=move || state.columns.get().join(", ")
+                                                        spellcheck="false"
+                                                        autocomplete="off"
+                                                        on:change=move |ev| {
+                                                            state.set_columns(event_target_value(&ev))
+                                                        }
+                                                    />
+                                                    <span class="ido-settings-hint">
+                                                        "comma-separated, in board order — the last column counts as done. tasks from a removed column drop to the backlog."
+                                                    </span>
+                                                </div>
+                                            }
+                                        })
+                                }}
+                                {move || {
+                                    state
+                                        .well
+                                        .get()
+                                        .map(|_| {
+                                            view! {
+                                                <div class="ido-settings-row ido-settings-row-stack">
+                                                    <span class="ido-settings-label">
+                                                        "auto-archive done after"
+                                                    </span>
+                                                    <div class="ido-settings-inline">
+                                                        <input
+                                                            type="number"
+                                                            min="1"
+                                                            step="1"
+                                                            class="ido-settings-input ido-settings-input-narrow"
+                                                            placeholder="off"
+                                                            prop:value=move || {
+                                                                state
+                                                                    .archive_days
+                                                                    .get()
+                                                                    .map(|d| d.to_string())
+                                                                    .unwrap_or_default()
+                                                            }
+                                                            on:change=move |ev| {
+                                                                let raw = event_target_value(&ev);
+                                                                let days = raw
+                                                                    .trim()
+                                                                    .parse::<u32>()
+                                                                    .ok()
+                                                                    .filter(|d| *d > 0);
+                                                                state.set_archive_days(days);
+                                                            }
+                                                        />
+                                                        <span class="ido-settings-suffix">"days"</span>
+                                                    </div>
+                                                    <span class="ido-settings-hint">
+                                                        "done tasks older than this are archived automatically (restorable from the archive view); empty = off."
+                                                    </span>
+                                                </div>
+                                            }
+                                        })
+                                }}
                             </div>
                         </div>
                     }

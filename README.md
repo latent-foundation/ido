@@ -2,27 +2,43 @@
 
 > 井戸 — a quiet well for thought.
 
-`ido` is a local-first, markdown-based knowledge system: notes now, growing toward
-notes, wiki, and project management. The archive is plain `.md` files on your own
-machine — durable, portable, yours. No lock-in, no latency, no surveillance of thought.
+`ido` is a local-first, markdown-based knowledge system. A **well** is any folder you
+pick; inside it live three sections — **notes**, a **wiki**, and **tasks** (a kanban
+board with goals) — all as plain `.md` files on your own machine. Durable, portable,
+yours: no lock-in, no latency.
 
-Part of the **latent.** ecosystem. A desktop app built with
-Tauri + Leptos (Rust).
+Part of the **latent.** ecosystem. A desktop app built with Tauri + Leptos (Rust).
 
-## Status
+## What's there
 
-Early, but functional. Today ido has two screens — a **launch screen** (open / create
-a well) and an **editor** with three modes:
+Open or create a **well**, then work in three sections, switched from the left rail:
 
-- **Source** — raw markdown textarea, autosaves on every keystroke.
-- **Live** — block live-preview. Each top-level markdown block renders as HTML; click
-  to open it in a textarea. Press Enter on a blank line to split or append a block,
-  Backspace at column 0 to merge with the block above, and ↑/↓ to navigate.
-- **Reading** — fully rendered, read-only. Links open in the OS browser.
+- **notes** — freeform markdown in folders. A tree sidebar (create / rename / delete /
+  drag-to-move) and three editor modes:
+  - **source** — raw markdown, autosaves on every keystroke.
+  - **live** — block live-preview: each top-level block renders as HTML; click to edit it.
+    Enter on a blank line splits or appends a block, Backspace at the start merges up, ↑/↓
+    navigate.
+  - **reading** — fully rendered, read-only.
 
-Inline math (`$…$`) and display math (`$$…$$`) render to MathML. The note tree
-supports create, rename, delete, and drag-to-move. Not yet built: search, wikilinks,
-and the wiki / task / goal surfaces ido is ultimately aiming at.
+  Inline (`$…$`) and display (`$$…$$`) math render to MathML.
+- **wiki** — a flat space of linked pages. `[[wikilinks]]` (created on click when they don't
+  exist yet) and a "linked from" panel that spans **every section** — notes, wiki pages, even
+  task and goal bodies that reference a page show up there; renaming a page updates inbound
+  links across all of them.
+- **tasks** — a kanban board (one markdown file per task) with quick capture (type a title in a
+  column's footer, Enter, repeat), free-text task titles, due dates that flag overdue / due-today,
+  a backlog of unstarted work, drag between columns *and* to a precise spot within one,
+  search / sort / hide-done, columns editable in settings, and a detail drawer that edits the
+  task body with the same block editor. **Goals** (milestones) group tasks and show progress.
+
+  Task-list checkboxes (`- [ ]`) in any rendered view are clickable — a click flips the marker
+  in the markdown itself.
+
+Tabs keep several entries open at once: single-click to preview, edit to keep, restored when you
+reopen a well. **Split** the editor into two panes side by side (drag a tab across, or to the edge),
+and **search** across all three sections with `Ctrl+K`. Right-click any entry for its actions.
+Bigger bets still ahead: an MCP server over the store, on-device AI, and optional sync.
 
 ## Develop
 
@@ -39,7 +55,7 @@ just verify                                # format check + lint — exactly wha
 
 ## Learn more
 
-- [CLAUDE.md](CLAUDE.md) — architecture, commands, and conventions for this repo.
+- [CLAUDE.md](CLAUDE.md) — architecture, commands, conventions, current state, and what's next.
 - [`vendor/latent-design/docs/`](vendor/latent-design/docs/) — the ecosystem canon
   (architecture, conventions, glossary).
 - `vendor/latent-design/README.md` — the latent. brand canon.

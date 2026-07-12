@@ -5,7 +5,7 @@ use leptos::prelude::*;
 
 use crate::icon::Icon;
 use crate::model::TreeNode;
-use crate::state::{parent_of, State};
+use crate::state::{parent_of, MenuTarget, State};
 
 /// Render a level of the tree, recursing into expanded folders.
 ///
@@ -57,6 +57,7 @@ fn TreeRow(name: String, path: String, is_dir: bool, indent: i32) -> impl IntoVi
     let p_drag = path.clone();
     let p_over = path.clone();
     let p_dropclass = path.clone();
+    let p_menu = path.clone();
     let p_drop = path;
     let label = name;
 
@@ -64,7 +65,9 @@ fn TreeRow(name: String, path: String, is_dir: bool, indent: i32) -> impl IntoVi
         <div
             class="ido-tree-row"
             draggable="true"
-            class:active=move || !is_dir && state.active.get().as_deref() == Some(p_active.as_str())
+            class:active=move || {
+                !is_dir && state.active_note().as_deref() == Some(p_active.as_str())
+            }
             class:target=move || is_dir && state.target.get() == p_target
             class:drop=move || {
                 is_dir && state.drag_over.get().as_deref() == Some(p_dropclass.as_str())
@@ -75,9 +78,22 @@ fn TreeRow(name: String, path: String, is_dir: bool, indent: i32) -> impl IntoVi
                     state.toggle_expand(p_click.clone());
                     state.target.set(p_click.clone());
                 } else {
-                    state.open_note(p_click.clone());
+                    state.preview_note(p_click.clone());
                     state.target.set(parent_of(&p_click));
                 }
+            }
+            on:contextmenu=move |ev| {
+                ev.prevent_default();
+                ev.stop_propagation();
+                state
+                    .open_menu(
+                        ev.client_x(),
+                        ev.client_y(),
+                        MenuTarget::Note {
+                            id: p_menu.clone(),
+                            is_dir,
+                        },
+                    );
             }
             on:dragstart=move |_| state.dragging.set(Some((p_drag.clone(), is_dir)))
             on:dragend=move |_| {

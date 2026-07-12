@@ -13,7 +13,9 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-use crate::model::{NoteMeta, Session, TreeNode, WellRef};
+use crate::model::{
+    Goal, LinkRef, NoteMeta, SavedView, SearchHit, Session, Task, TreeNode, WellRef,
+};
 
 #[wasm_bindgen]
 extern "C" {
@@ -37,6 +39,15 @@ async fn call<A: Serialize>(cmd: &str, args: &A) -> Result<JsValue, JsValue> {
 fn deser<T: DeserializeOwned>(res: Result<JsValue, JsValue>) -> Option<T> {
     res.ok()
         .and_then(|js| serde_wasm_bindgen::from_value(js).ok())
+}
+
+/// Invoke a command that returns `Result`, surfacing the backend's `Err` string
+/// (so the UI can show why it failed, e.g. a rename collision).
+async fn call_res<A: Serialize, T: DeserializeOwned>(cmd: &str, args: &A) -> Result<T, String> {
+    match call(cmd, args).await {
+        Ok(js) => serde_wasm_bindgen::from_value(js).map_err(|e| e.to_string()),
+        Err(js) => Err(js.as_string().unwrap_or_else(|| "command failed".into())),
+    }
 }
 
 #[derive(Serialize)]
@@ -119,6 +130,76 @@ struct WriteSessionArg {
     active: Option<usize>,
 }
 
+#[derive(Serialize)]
+struct PageArg {
+    well: String,
+    slug: String,
+}
+
+#[derive(Serialize)]
+struct WritePageArg {
+    well: String,
+    slug: String,
+    content: String,
+}
+
+#[derive(Serialize)]
+struct RenamePageArg {
+    well: String,
+    slug: String,
+    name: String,
+}
+
+#[derive(Serialize)]
+struct CreateTaskArg {
+    well: String,
+    status: String,
+    title: String,
+    due: Option<String>,
+}
+
+#[derive(Serialize)]
+struct TaskIdArg {
+    well: String,
+    id: String,
+}
+
+#[derive(Serialize)]
+struct MoveTaskArg {
+    well: String,
+    id: String,
+    status: String,
+}
+
+#[derive(Serialize)]
+struct ReorderColumnArg {
+    well: String,
+    status: String,
+    ids: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct TaskFieldArg {
+    well: String,
+    id: String,
+    key: String,
+    value: String,
+}
+
+#[derive(Serialize)]
+struct TaskBodyArg {
+    well: String,
+    id: String,
+    body: String,
+}
+
+#[derive(Serialize)]
+struct TaskRenameArg {
+    well: String,
+    id: String,
+    name: String,
+}
+
 // --- wells -----------------------------------------------------------------
 
 /// Wells remembered as recently opened, most-recent first.
@@ -186,20 +267,23 @@ pub async fn create_folder(well: String, parent: String) -> Option<String> {
     deser(call("create_folder", &ParentArg { well, parent }).await)
 }
 
-/// Rename a note/folder in place; returns the new id, or `None` on error.
-pub async fn rename_entry(well: String, id: String, is_dir: bool, name: String) -> Option<String> {
-    deser(
-        call(
-            "rename_entry",
-            &RenameArg {
-                well,
-                id,
-                is_dir,
-                name,
-            },
-        )
-        .await,
+/// Rename a note/folder in place; returns the new id, or the error string.
+pub async fn rename_entry(
+    well: String,
+    id: String,
+    is_dir: bool,
+    name: String,
+) -> Result<String, String> {
+    call_res(
+        "rename_entry",
+        &RenameArg {
+            well,
+            id,
+            is_dir,
+            name,
+        },
     )
+    .await
 }
 
 /// Delete a note (or empty folder); `true` on success.
@@ -225,6 +309,258 @@ pub async fn move_entry(well: String, id: String, is_dir: bool, dest: String) ->
     )
 }
 
+// --- wiki -------------------------------------------------------------------
+
+/// The wiki's page slugs, alphabetical.
+pub async fn list_wiki(well: String) -> Vec<String> {
+    deser(call("list_wiki", &WellArg { well }).await).unwrap_or_default()
+}
+
+/// A wiki page's markdown body (empty when the page doesn't exist yet).
+pub async fn read_page(well: String, slug: String) -> String {
+    call("read_page", &PageArg { well, slug })
+        .await
+        .ok()
+        .and_then(|js| js.as_string())
+        .unwrap_or_default()
+}
+
+/// Persist a wiki page's body.
+pub async fn write_page(well: String, slug: String, content: String) {
+    let _ = call(
+        "write_page",
+        &WritePageArg {
+            well,
+            slug,
+            content,
+        },
+    )
+    .await;
+}
+
+/// Create a new uniquely-named empty page; returns its slug.
+pub async fn create_page(well: String) -> Option<String> {
+    deser(call("create_page", &WellArg { well }).await)
+}
+
+/// Create `slug` if it doesn't exist (backs "create on click" for a wikilink).
+pub async fn ensure_page(well: String, slug: String) {
+    let _ = call("ensure_page", &PageArg { well, slug }).await;
+}
+
+/// Rename page `slug` to the slug of `name`; returns the new slug.
+pub async fn rename_page(well: String, slug: String, name: String) -> Result<String, String> {
+    call_res("rename_page", &RenamePageArg { well, slug, name }).await
+}
+
+/// Delete wiki page `slug`; `true` on success.
+pub async fn delete_page(well: String, slug: String) -> bool {
+    call("delete_page", &PageArg { well, slug }).await.is_ok()
+}
+
+/// Everything that links to `slug` (its backlinks) across notes + wiki.
+pub async fn backlinks(well: String, slug: String) -> Vec<LinkRef> {
+    deser(call("backlinks", &PageArg { well, slug }).await).unwrap_or_default()
+}
+
+// --- search -----------------------------------------------------------------
+
+#[derive(Serialize)]
+struct SearchArg {
+    well: String,
+    query: String,
+}
+
+/// Cross-section search hits for `query` (notes + wiki + tasks).
+pub async fn search(well: String, query: String) -> Vec<SearchHit> {
+    deser(call("search", &SearchArg { well, query }).await).unwrap_or_default()
+}
+
+// --- tasks ------------------------------------------------------------------
+
+/// The board columns (task `status` values) for this well.
+pub async fn task_columns(well: String) -> Vec<String> {
+    deser(call("task_columns", &WellArg { well }).await).unwrap_or_default()
+}
+
+#[derive(Serialize)]
+struct SetColumnsArg {
+    well: String,
+    columns: Vec<String>,
+}
+
+/// Replace the board's columns; returns the stored (slugified, deduped) set,
+/// or the error string (e.g. no valid names).
+pub async fn set_task_columns(well: String, columns: Vec<String>) -> Result<Vec<String>, String> {
+    call_res("set_task_columns", &SetColumnsArg { well, columns }).await
+}
+
+/// The well's auto-archive-done-after-N-days setting; `None` = off.
+pub async fn archive_days(well: String) -> Option<u32> {
+    deser(call("archive_days", &WellArg { well }).await).unwrap_or_default()
+}
+
+#[derive(Serialize)]
+struct SetArchiveDaysArg {
+    well: String,
+    days: Option<u32>,
+}
+
+/// Set (or clear, with `None`) the auto-archive-done setting; the backend
+/// runs the sweep immediately, so a newly-set or lowered threshold can
+/// archive tasks right away. Returns the stored value, or the error string.
+pub async fn set_archive_days(well: String, days: Option<u32>) -> Result<Option<u32>, String> {
+    call_res("set_archive_days", &SetArchiveDaysArg { well, days }).await
+}
+
+/// The well's saved tasks-toolbar views (the board's "views" dropdown).
+pub async fn saved_views(well: String) -> Vec<SavedView> {
+    deser(call("saved_views", &WellArg { well }).await).unwrap_or_default()
+}
+
+#[derive(Serialize)]
+struct SetViewsArg {
+    well: String,
+    views: Vec<SavedView>,
+}
+
+/// Replace the well's saved views wholesale; returns the stored list (blank
+/// names dropped), or the error string.
+pub async fn set_saved_views(
+    well: String,
+    views: Vec<SavedView>,
+) -> Result<Vec<SavedView>, String> {
+    call_res("set_saved_views", &SetViewsArg { well, views }).await
+}
+
+/// Every task in the well, sorted by order.
+pub async fn list_tasks(well: String) -> Vec<Task> {
+    deser(call("list_tasks", &WellArg { well }).await).unwrap_or_default()
+}
+
+/// Create a task in column `status` titled `title` (blank = untitled), due on
+/// `due` (`None`/empty = undated); returns its id (the title's slug, uniquified).
+pub async fn create_task(
+    well: String,
+    status: String,
+    title: String,
+    due: Option<String>,
+) -> Option<String> {
+    deser(
+        call(
+            "create_task",
+            &CreateTaskArg {
+                well,
+                status,
+                title,
+                due,
+            },
+        )
+        .await,
+    )
+}
+
+/// Move task `id` into column `status` (appended at the end).
+pub async fn move_task(well: String, id: String, status: String) {
+    let _ = call("move_task", &MoveTaskArg { well, id, status }).await;
+}
+
+/// Reorder column `status` to exactly `ids` (each gets `order = index`).
+pub async fn reorder_column(well: String, status: String, ids: Vec<String>) {
+    let _ = call("reorder_column", &ReorderColumnArg { well, status, ids }).await;
+}
+
+/// Set (or clear, when blank) a single task metadata field.
+pub async fn set_task_field(well: String, id: String, key: String, value: String) {
+    let _ = call(
+        "set_task_field",
+        &TaskFieldArg {
+            well,
+            id,
+            key,
+            value,
+        },
+    )
+    .await;
+}
+
+/// Replace a task's markdown body.
+pub async fn update_task_body(well: String, id: String, body: String) {
+    let _ = call("update_task_body", &TaskBodyArg { well, id, body }).await;
+}
+
+/// Rename task `id` to the slug of `name`; returns the new id, or the error string.
+pub async fn rename_task(well: String, id: String, name: String) -> Result<String, String> {
+    call_res("rename_task", &TaskRenameArg { well, id, name }).await
+}
+
+/// Delete task `id`; returns its raw content (for undo), or `None` on error.
+pub async fn delete_task(well: String, id: String) -> Option<String> {
+    deser(call("delete_task", &TaskIdArg { well, id }).await)
+}
+
+/// Recreate task `id` from raw markdown (undo of a delete).
+pub async fn restore_task(well: String, id: String, content: String) {
+    let _ = call("restore_task", &WriteArg { well, id, content }).await;
+}
+
+// --- goals ------------------------------------------------------------------
+
+/// Every goal in the well, alphabetical.
+pub async fn list_goals(well: String) -> Vec<Goal> {
+    deser(call("list_goals", &WellArg { well }).await).unwrap_or_default()
+}
+
+/// Create a new empty goal; returns its id.
+pub async fn create_goal(well: String) -> Option<String> {
+    deser(call("create_goal", &WellArg { well }).await)
+}
+
+#[derive(Serialize)]
+struct ReorderGoalsArg {
+    well: String,
+    ids: Vec<String>,
+}
+
+/// Renumber the goals bar to match `ids` (drag-to-reorder).
+pub async fn reorder_goals(well: String, ids: Vec<String>) {
+    let _ = call("reorder_goals", &ReorderGoalsArg { well, ids }).await;
+}
+
+/// Set (or clear, when blank) a goal field (`target`).
+pub async fn set_goal_field(well: String, id: String, key: String, value: String) {
+    let _ = call(
+        "set_goal_field",
+        &TaskFieldArg {
+            well,
+            id,
+            key,
+            value,
+        },
+    )
+    .await;
+}
+
+/// Replace a goal's markdown body.
+pub async fn update_goal_body(well: String, id: String, body: String) {
+    let _ = call("update_goal_body", &TaskBodyArg { well, id, body }).await;
+}
+
+/// Rename goal `id` to the slug of `name`; returns the new id, or the error string.
+pub async fn rename_goal(well: String, id: String, name: String) -> Result<String, String> {
+    call_res("rename_goal", &TaskRenameArg { well, id, name }).await
+}
+
+/// Delete goal `id`; returns its raw content (for undo), or `None` on error.
+pub async fn delete_goal(well: String, id: String) -> Option<String> {
+    deser(call("delete_goal", &TaskIdArg { well, id }).await)
+}
+
+/// Recreate goal `id` from raw markdown (undo of a delete).
+pub async fn restore_goal(well: String, id: String, content: String) {
+    let _ = call("restore_goal", &WriteArg { well, id, content }).await;
+}
+
 // --- session ---------------------------------------------------------------
 
 /// A well's saved open-tabs session; `None` on error (treated as empty).
@@ -235,6 +571,33 @@ pub async fn read_session(well: String) -> Option<Session> {
 /// Persist a well's open tabs (note ids) + active index. Fire-and-forget.
 pub async fn write_session(well: String, tabs: Vec<String>, active: Option<usize>) {
     let _ = call("write_session", &WriteSessionArg { well, tabs, active }).await;
+}
+
+// --- assets ------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct SaveAssetArg {
+    well: String,
+    name: String,
+    bytes: Vec<u8>,
+}
+
+/// Save a pasted/dropped image's bytes into the well's shared `assets/` folder;
+/// returns its well-relative id (`assets/<file>`) to embed as `![](…)`.
+pub async fn save_asset(well: String, name: String, bytes: Vec<u8>) -> Option<String> {
+    deser(call("save_asset", &SaveAssetArg { well, name, bytes }).await)
+}
+
+#[derive(Serialize)]
+struct AssetArg {
+    well: String,
+    id: String,
+}
+
+/// Read an asset (by well-relative id, e.g. `assets/foo.png`) back as a `data:`
+/// URI for inline rendering.
+pub async fn read_asset(well: String, id: String) -> Option<String> {
+    deser(call("read_asset", &AssetArg { well, id }).await)
 }
 
 // --- window ----------------------------------------------------------------
@@ -250,6 +613,16 @@ pub async fn apply_window(width: f64, height: f64, resizable: bool) {
         },
     )
     .await;
+}
+
+/// Restore the editor window to the remembered geometry (or the default).
+pub async fn restore_window() {
+    let _ = call_bare("restore_window").await;
+}
+
+/// Persist the editor window's current size, position, and maximized state.
+pub async fn remember_window() {
+    let _ = call_bare("remember_window").await;
 }
 
 /// Reveal the (initially hidden) window.

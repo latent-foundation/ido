@@ -11,7 +11,31 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 # Reading the clicked anchor in the rendered markdown (link interception).
 # HtmlTextAreaElement: cursor position for ↑/↓ block navigation and Backspace-merge.
-web-sys = { version = "0.3", features = ["Element", "HtmlTextAreaElement"] }
+# DragEvent/DomRect/NodeList: measuring card positions for the kanban drop indicator.
+# Document/Navigator/Clipboard: editor context-menu cut/copy/paste (execCommand + clipboard).
+# ClipboardEvent/DataTransfer/File/FileList/Blob: pulling pasted/dropped images out of
+# `on:paste`/`on:drop` and reading their bytes (see `components::mainpane::attachments`).
+# HtmlInputElement: imperative value/caret writes for the tags-autocomplete popover
+# (`components::tasks::tagsinput`), the same uncontrolled-input idiom as the column quick-add.
+web-sys = { version = "0.3", features = [
+    "Element",
+    "HtmlTextAreaElement",
+    "HtmlInputElement",
+    "DragEvent",
+    "MouseEvent",
+    "Node",
+    "NodeList",
+    "DomRect",
+    "Window",
+    "Document",
+    "Navigator",
+    "Clipboard",
+    "ClipboardEvent",
+    "DataTransfer",
+    "File",
+    "FileList",
+    "Blob",
+] }
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 console_error_panic_hook = "0.1.7"

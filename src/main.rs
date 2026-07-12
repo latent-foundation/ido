@@ -6,6 +6,7 @@
 //! - [`state`] — reactive [`state::State`] + action methods, shared via context
 //! - [`blocks`] — markdown block segmentation for the live editor
 //! - [`markdown`] — markdown → HTML for per-block and reading-view rendering
+//! - [`dates`] — shared date math (parsing, formatting, calendar arithmetic)
 //! - [`icon`] — inline icons
 //! - [`components`] — the title bar, launcher, editor, tree, and settings
 //! - [`app`] — the root that composes them
@@ -13,6 +14,7 @@
 mod app;
 mod blocks;
 mod components;
+mod dates;
 mod icon;
 mod ipc;
 mod markdown;
