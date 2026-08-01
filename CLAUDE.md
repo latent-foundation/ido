@@ -100,7 +100,7 @@ Both crates are split into small, documented modules (module-level `//!` + item 
   `weekday` / `add_days` / `add_months` / `ymd` + tests; `today()` reads `js_sys` and must never
   run in host-side tests — pure helpers take "today" as a parameter), `icon`, `app` (root), and
   `components/`:
-  - **shell:** `titlebar` (custom chrome + well name), `launch` (launcher), `rail` (section switcher
+  - **shell:** `titlebar` (custom chrome + well name; per-OS controls), `launch` (launcher), `rail` (section switcher
     + 井戸 switch-well + **search** + settings), `workspace` (rail + section sidebar + editor pane(s);
     global tab/split/search keyboard shortcuts + the native-context-menu suppressor), `settings`,
     `search` (the `Ctrl+K` command palette), `toast` (undo / error toasts), `contextmenu` (the
@@ -195,7 +195,18 @@ cargo check -p ido-ui                      # fast type-check of just the fronten
   false`) and **must** be revealed by `show_window` (called at the end of startup) — skip it and
   the app is invisible. Dragging uses `data-tauri-drag-region` on `.ido-titlebar`, which needs
   `core:window:allow-start-dragging` in `capabilities/default.json`; the min/maximize/close
-  buttons call Rust commands, so they need no capability. **In-webview HTML5 drag-and-drop (the
+  buttons call Rust commands, so they need no capability. The controls **follow the host OS**
+  (`platform::is_mac`, UA-sniffed — the frontend is WASM, so `cfg!(target_os)` describes the wrong
+  machine): three latent-palette dots on the left on macOS, a minimize/maximize/close row on the
+  right elsewhere. The **third control routes per platform** (`window::toggle_zoom`): macOS gets
+  **native fullscreen**, because only that gives the window its own Space — which is what makes
+  `Ctrl+←/→` swipe between it and the desktop — whereas `maximize()` on a borderless window can
+  only resize it to the work area. `decorations: false` is no obstacle; tao swaps in a
+  `Titled | Resizable` mask around `toggleFullScreen:` and restores the borderless one on exit.
+  Windows/Linux keep native maximize, which also drives snap and the taskbar's window state.
+  macOS fullscreen is **never persisted** (reopening into a Space the user has left is
+  disorienting), so `WinState.maximized` is a Windows/Linux-only concern.
+  **In-webview HTML5 drag-and-drop (the
   note tree, kanban cards + backlog, the tab strip) requires `dragDropEnabled: false` on the
   window** — the OS file-drop handler otherwise swallows `dragstart`/`drop` before they reach the page.
   Because of this, an OS file drop (e.g. an image) reaches the page as a normal HTML5 drop instead —
@@ -218,8 +229,11 @@ fixed on the launcher, resizable in the workspace — the editor window's size, 
 maximized state are **remembered** per user (`window::save_geometry` → `app_data/window.json`; a
 debounced resize handler in `workspace` saves size, and a `CloseRequested` handler in `run()` saves
 the final geometry — the reliable capture point for position, since the OS gives no move event).
-`restore_window` re-applies on open: size **clamped to the monitor**, position restored only if it's
-still on a connected monitor (else centred). Two edge-cases are handled so nothing is silently lost:
+`restore_window` re-applies on open: size **clamped to the monitor work area**, position restored
+only if it's still on a connected monitor (else centred). On **first run** there is nothing to
+restore, so the size is derived from the display instead of fixed in pixels — 86% of the work-area
+height, width from a 1.6 aspect ratio, capped at 90% of the work-area width (`window::default_editor`)
+— which lands sensibly on a 13" laptop and a 32" panel alike. Two edge-cases are handled so nothing is silently lost:
 while maximized only the flag flips (the un-maximized restore size is kept), and a size that merely
 echoes a monitor-**clamp** isn't written back — so a big window shrunk to fit a laptop is restored
 full-size back on the large monitor.

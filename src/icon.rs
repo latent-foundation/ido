@@ -77,6 +77,7 @@ fn icon_paths(name: &str) -> &'static str {
         }
         "search" => r#"<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>"#,
         "minus" => r#"<path d="M5 12h14"/>"#,
+        "plus" => r#"<path d="M5 12h14"/><path d="M12 5v14"/>"#,
         "square" => r#"<rect x="5" y="5" width="14" height="14" rx="1.5"/>"#,
         "x" => r#"<path d="M6 6 18 18"/><path d="M18 6 6 18"/>"#,
         "eye" => {

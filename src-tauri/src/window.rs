@@ -1,6 +1,6 @@
 //! Window control. The chrome is custom (`decorations: false` in
 //! `tauri.conf.json`), so the frontend drives size, resizability, reveal, and
-//! the minimize / maximize / close buttons through these commands. The editor
+//! the minimize / zoom / close buttons through these commands. The editor
 //! window's size, position, and maximized state persist to
 //! `app_data/window.json`.
 
@@ -14,15 +14,27 @@ use tauri::Manager;
 /// sidebar and a usable editor visible, so it can't collapse into a pill.
 const EDITOR_MIN: (f64, f64) = (640.0, 480.0);
 
-/// First-run editor size — roomy enough for the full task board (rail + four
-/// columns). Clamped to the monitor on small screens; overridden once the user
-/// resizes (their size is remembered).
-const DEFAULT_EDITOR: (f64, f64) = (1280.0, 840.0);
+/// First-run editor size, as a fraction of the monitor work area's **height**,
+/// with the width derived from [`DEFAULT_ASPECT`]. Sizing off the display rather
+/// than fixing pixels keeps the window a sensible share of a 13" laptop and of a
+/// 32" desktop panel alike — one fixed size is cramped on the former and lost on
+/// the latter. Overridden once the user resizes (their size is remembered).
+const DEFAULT_HEIGHT_FRACTION: f64 = 0.86;
 
-/// Resize and (un)lock the window, then re-centre it. When locking it fixed,
-/// any maximized state is dropped first so the size actually takes effect. A
-/// minimum size is enforced: [`EDITOR_MIN`] when resizable, otherwise the fixed
-/// size itself.
+/// Width:height for the first-run window.
+const DEFAULT_ASPECT: f64 = 1.6;
+
+/// Cap on the first-run width, as a fraction of the work area — so the derived
+/// width can't span an ultrawide end to end.
+const DEFAULT_MAX_WIDTH_FRACTION: f64 = 0.9;
+
+/// First-run size used only when the monitor can't be read.
+const FALLBACK_EDITOR: (f64, f64) = (1100.0, 720.0);
+
+/// Resize and (un)lock the window, then re-centre it. When locking it fixed, any
+/// zoomed state is dropped first so the size actually takes effect. A minimum
+/// size is enforced: [`EDITOR_MIN`] when resizable, otherwise the fixed size
+/// itself.
 #[tauri::command]
 pub fn apply_window(
     window: tauri::WebviewWindow,
@@ -30,8 +42,8 @@ pub fn apply_window(
     height: f64,
     resizable: bool,
 ) -> Result<(), String> {
-    if !resizable && window.is_maximized().unwrap_or(false) {
-        let _ = window.unmaximize();
+    if !resizable {
+        let _ = unzoom(&window);
     }
     let (min_w, min_h) = if resizable {
         EDITOR_MIN
@@ -79,19 +91,35 @@ fn write_win(app: &tauri::AppHandle, st: WinState) {
     }
 }
 
-/// `(w, h)` clamped to the window's current monitor, leaving room for the
-/// taskbar. Same margins the restore uses, so [`save_geometry`] can recognise a
-/// size that merely echoes a clamp.
-fn clamp_to_monitor(window: &tauri::WebviewWindow, w: f64, h: f64) -> (f64, f64) {
-    if let Ok(Some(mon)) = window.current_monitor() {
-        let sf = mon.scale_factor();
-        let size = mon.size();
-        return (
-            w.min(size.width as f64 / sf - 20.0),
-            h.min(size.height as f64 / sf - 60.0),
-        );
-    }
+/// The window's current monitor **work area** in logical px — the screen minus
+/// the menu bar, taskbar, and dock.
+fn work_area(window: &tauri::WebviewWindow) -> Option<(f64, f64)> {
+    let mon = window.current_monitor().ok().flatten()?;
+    let sf = mon.scale_factor();
+    let size = mon.work_area().size;
+    Some((size.width as f64 / sf, size.height as f64 / sf))
+}
+
+/// The first-run editor size for this window's monitor — see
+/// [`DEFAULT_HEIGHT_FRACTION`].
+fn default_editor(window: &tauri::WebviewWindow) -> (f64, f64) {
+    let Some((area_w, area_h)) = work_area(window) else {
+        return FALLBACK_EDITOR;
+    };
+    let h = (area_h * DEFAULT_HEIGHT_FRACTION).max(EDITOR_MIN.1);
+    let w = (h * DEFAULT_ASPECT)
+        .min(area_w * DEFAULT_MAX_WIDTH_FRACTION)
+        .max(EDITOR_MIN.0);
     (w, h)
+}
+
+/// `(w, h)` (logical) clamped to the window's monitor work area, so a size saved
+/// on a big display can't open off-screen on a small one.
+fn clamp_to_monitor(window: &tauri::WebviewWindow, w: f64, h: f64) -> (f64, f64) {
+    match work_area(window) {
+        Some((area_w, area_h)) => (w.min(area_w), h.min(area_h)),
+        None => (w, h),
+    }
 }
 
 /// Whether the physical point `(x, y)` falls inside any connected monitor — used
@@ -110,12 +138,102 @@ fn position_on_monitor(window: &tauri::WebviewWindow, x: i32, y: i32) -> bool {
         .unwrap_or(false)
 }
 
+// --- zoom -----------------------------------------------------------------
+//
+// The third window control means different things per platform, so it routes to
+// different APIs.
+//
+// On **macOS** it is native fullscreen. The platform's green button fullscreens
+// rather than maximizes, and only real fullscreen gives the window its own Space
+// — which is what makes Ctrl+←/→ swipe between it and the desktop. Merely
+// resizing to the work area, which is all `maximize()` can do here, leaves the
+// window a big rectangle on the current Space. `decorations: false` is no
+// obstacle: tao temporarily swaps in a `Titled | Resizable` mask around
+// `toggleFullScreen:` (AppKit ignores the call without it) and restores the
+// borderless mask on exit.
+//
+// On **Windows and Linux** it is a plain maximize, which also drives snap and
+// the taskbar's window state.
+
+/// Toggle the window's zoomed state — fullscreen on macOS, maximized elsewhere.
+fn toggle_zoom(window: &tauri::WebviewWindow) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let on = window.is_fullscreen().map_err(|e| e.to_string())?;
+        window.set_fullscreen(!on).map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if window.is_maximized().unwrap_or(false) {
+            window.unmaximize()
+        } else {
+            window.maximize()
+        }
+        .map_err(|e| e.to_string())
+    }
+}
+
+/// Drop any zoomed state, so an explicit [`apply_window`] size takes effect.
+fn unzoom(window: &tauri::WebviewWindow) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        if window.is_fullscreen().unwrap_or(false) {
+            return window.set_fullscreen(false).map_err(|e| e.to_string());
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if window.is_maximized().unwrap_or(false) {
+            return window.unmaximize().map_err(|e| e.to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Whether the window's current frame is a transient one that must never be
+/// recorded as its normal geometry — fullscreen on macOS, maximized elsewhere.
+fn zoomed(window: &tauri::WebviewWindow) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        window.is_fullscreen().unwrap_or(false)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.is_maximized().unwrap_or(false)
+    }
+}
+
+/// Apply a normal (un-zoomed) geometry: size clamped to the current monitor,
+/// position re-applied only if it's still on a connected one (else centred).
+fn apply_geometry(window: &tauri::WebviewWindow, saved: Option<WinState>) -> Result<(), String> {
+    let (width, height) = saved
+        .map(|s| (s.width, s.height))
+        .unwrap_or_else(|| default_editor(window));
+    let (width, height) = clamp_to_monitor(window, width, height);
+    window
+        .set_size(tauri::LogicalSize::new(width, height))
+        .map_err(|e| e.to_string())?;
+    let placed = saved.and_then(|s| s.x.zip(s.y)).is_some_and(|(x, y)| {
+        position_on_monitor(window, x, y) && {
+            let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+            true
+        }
+    });
+    if !placed {
+        let _ = window.center();
+    }
+    Ok(())
+}
+
 /// Persist the editor window's geometry (logical size, physical position,
 /// maximized). Called on resize (debounced) and on close ([`crate::run`]'s
 /// `CloseRequested` handler). Two subtleties:
 ///
-/// - **While maximized**, the *restore* size is kept and only the flag flips, so
-///   relaunching maximized doesn't lose the un-maximized size.
+/// - **While zoomed**, the window's frame is not its normal geometry. On
+///   Windows/Linux the *restore* size is kept and only the maximized flag flips,
+///   so relaunching maximized doesn't lose the un-maximized size. macOS
+///   fullscreen is deliberately not persisted at all — reopening into a Space
+///   the user has since left is disorienting — so nothing is written.
 /// - **A clamped restore isn't written back.** When a big saved size is opened on
 ///   a smaller monitor, [`restore_window`] shrinks it to fit; the resize that
 ///   fires would otherwise overwrite the (larger) saved size with the clamp. If
@@ -126,7 +244,8 @@ pub(crate) fn save_geometry(app: &tauri::AppHandle) {
         return;
     };
     let saved = read_win(app);
-    if window.is_maximized().unwrap_or(false) {
+    if zoomed(&window) {
+        #[cfg(not(target_os = "macos"))]
         if let Some(mut s) = saved {
             s.maximized = true;
             write_win(app, s);
@@ -173,30 +292,18 @@ pub fn remember_window(app: tauri::AppHandle) {
     save_geometry(&app);
 }
 
-/// Restore the editor window to the remembered geometry (or [`DEFAULT_EDITOR`]):
-/// size clamped to the current monitor, position re-applied if it's still on a
-/// connected monitor (else centred), and maximized if it was.
+/// Restore the editor window to the remembered geometry (or, on first run, a
+/// size proportional to the display — see [`default_editor`]): clamped to the
+/// current monitor, position re-applied if it's still on a connected monitor
+/// (else centred), and maximized if it was. macOS never reopens into fullscreen
+/// (see [`save_geometry`]).
 #[tauri::command]
 pub fn restore_window(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
     let saved = read_win(&app);
-    let (width, height) = saved.map(|s| (s.width, s.height)).unwrap_or(DEFAULT_EDITOR);
-    let (width, height) = clamp_to_monitor(&window, width, height);
     let _ = window.set_min_size(Some(tauri::LogicalSize::new(EDITOR_MIN.0, EDITOR_MIN.1)));
     window.set_resizable(true).map_err(|e| e.to_string())?;
-    window
-        .set_size(tauri::LogicalSize::new(width, height))
-        .map_err(|e| e.to_string())?;
-    // Reopen where it was left, unless that monitor is gone — then centre. Set
-    // position before maximizing so it maximizes on the intended monitor.
-    let placed = saved.and_then(|s| s.x.zip(s.y)).is_some_and(|(x, y)| {
-        position_on_monitor(&window, x, y) && {
-            let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
-            true
-        }
-    });
-    if !placed {
-        let _ = window.center();
-    }
+    apply_geometry(&window, saved)?;
+    #[cfg(not(target_os = "macos"))]
     if saved.map(|s| s.maximized).unwrap_or(false) {
         let _ = window.maximize();
     }
@@ -217,14 +324,11 @@ pub fn win_minimize(window: tauri::WebviewWindow) -> Result<(), String> {
     window.minimize().map_err(|e| e.to_string())
 }
 
-/// Toggle between maximized and restored.
+/// Toggle the third window control — fullscreen on macOS, maximize elsewhere.
+/// See the zoom notes above for why the platforms differ.
 #[tauri::command]
 pub fn win_toggle_maximize(window: tauri::WebviewWindow) -> Result<(), String> {
-    if window.is_maximized().unwrap_or(false) {
-        window.unmaximize().map_err(|e| e.to_string())
-    } else {
-        window.maximize().map_err(|e| e.to_string())
-    }
+    toggle_zoom(&window)
 }
 
 /// Close the window (quits the app).

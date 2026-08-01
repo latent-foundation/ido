@@ -8,6 +8,7 @@
 //! - [`markdown`] — markdown → HTML for per-block and reading-view rendering
 //! - [`dates`] — shared date math (parsing, formatting, calendar arithmetic)
 //! - [`icon`] — inline icons
+//! - [`platform`] — which OS we're running on (the title bar follows it)
 //! - [`components`] — the title bar, launcher, editor, tree, and settings
 //! - [`app`] — the root that composes them
 
@@ -19,6 +20,7 @@ mod icon;
 mod ipc;
 mod markdown;
 mod model;
+mod platform;
 mod state;
 
 use app::App;

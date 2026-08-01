@@ -47,6 +47,68 @@ body {
   user-select: none;
 }
 
+/* macOS puts its controls on the left and centres the title. A 3-column grid
+   centres the name against the *window*, not against the leftover space, so it
+   stays put as the well name changes length. */
+.ido-titlebar.mac {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+}
+
+.ido-titlebar.mac .ido-title-well {
+  grid-column: 2;
+  padding-left: 0;
+  text-align: center;
+}
+
+/* Traffic-light-adjacent: macOS's placement and hover affordance, but latent's
+   palette instead of the system red/amber/green — outlines at rest, glyphs
+   revealed once the pointer is over the cluster. */
+.ido-mac-lights {
+  grid-column: 1;
+  justify-self: start;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 13px;
+}
+
+.ido-mac-dot {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 50%;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  cursor: default;
+  color: transparent; /* the glyph hides until the cluster is hovered */
+  transition: background var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+/* An 8px glyph needs a heavier stroke than the 1.6 icon default to read at all. */
+.ido-mac-dot .ido-icon {
+  stroke-width: 3.2;
+}
+
+.ido-mac-lights:hover .ido-mac-dot:not(:disabled) {
+  color: var(--color-text-muted);
+}
+
+/* The dot actually under the cursor fills, so the target is unambiguous. */
+.ido-mac-dot:not(:disabled):hover {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-bg);
+}
+
+.ido-mac-dot:disabled {
+  opacity: 0.45;
+}
+
 /* The open well's name — quiet metadata, visible across every section. */
 .ido-title-well {
   min-width: 0;
