@@ -14,8 +14,8 @@ several entries open (and a second editor pane can **split** off, side by side);
 **command palette** searches all three sections at once. [README.md](README.md) is the human-facing
 overview; this file is the working guide — the **Current state** section below tracks what's built and
 what's next. (Project docs live in this codebase + an ido well; `docs/` holds the working design
-docs — [calendar-integration.md](docs/calendar-integration.md), whose §3 + §5 are built, and
-[tasks-roadmap.md](docs/tasks-roadmap.md), the P1/P2 working plan.)
+docs — currently [mcp-server.md](docs/mcp-server.md), the plan for exposing the store over MCP
+with semantic search.)
 
 ## The big picture: a 3-layer app
 
@@ -343,8 +343,7 @@ into the first column with that due). Chips **drag to reschedule** (`set_task_fi
 always-mounted, class-toggled **unschedule tray** clears it — mounted always so appearing mid-drag
 can't reflow drop targets). The header has `‹ › / today` navigation and an **`overdue N` chip**
 whose popover lists overdue tasks oldest-first. Drawers overlay the calendar exactly as the board.
-The remaining phases (ICS export, external feeds; §4 due times shipped) are specced in
-[docs/calendar-integration.md](docs/calendar-integration.md).
+Due times shipped; ICS export and read-only external feeds are the remaining unbuilt phases.
 
 **Table** — the third task view (`tasks/table.rs`): every non-archived task (backlog included) in
 a sticky-header table scrolling its own container; columns title / status / priority / tags
@@ -407,12 +406,13 @@ re-renders. `workspace.rs` also installs a global `dragover`/`drop` fallback tha
 `prevent_default`s, so a file dropped anywhere other than an editor (or a non-image file dropped
 anywhere) doesn't navigate the webview instead of being silently ignored.
 
-**What's next** — the tasks P0/P1/P2 batches in [docs/tasks-roadmap.md](docs/tasks-roadmap.md)
-have **all landed** (a Notion import script was considered and dropped); next: the calendar's
-remaining phases per [docs/calendar-integration.md](docs/calendar-integration.md) (ICS export,
-read-only external feeds), small rough edges (N-way / persisted
-split, deeper goal-status surfacing) and the
-bigger bets, none started: an **MCP server** over the store (`search` / `backlinks` are the natural
-backing; read-only first, `rmcp` + stdio — see `vendor/latent-design/docs/knowledge-architecture.md`),
-**local-LLM / Gemma** in-app assistance (on-device, private), and **web sync** (self-hosted + optional
-cloud, end-to-end encrypted). Notes-as-`[[link]]`-targets and wiki folders are deliberate non-goals.
+**What's next** — the tasks P0/P1/P2 batches have **all landed** (a Notion import script was
+considered and dropped). The next big bet is the **MCP server + semantic search** over the store,
+specced end-to-end in [docs/mcp-server.md](docs/mcp-server.md): extract the store into a
+tauri-free `ido-store` crate, add an `rmcp` + stdio `ido-mcp` binary with seven read-only tools,
+then a local-embedding (fastembed) brute-force vector index fused with the existing lexical scan.
+Also open: the calendar's remaining phases (ICS export, read-only external feeds), small rough
+edges (N-way / persisted split, deeper goal-status surfacing), and the other bigger bets, none
+started: **local-LLM / Gemma** in-app assistance (on-device, private) and **web sync**
+(self-hosted + optional cloud, end-to-end encrypted). Notes-as-`[[link]]`-targets and wiki
+folders are deliberate non-goals.
