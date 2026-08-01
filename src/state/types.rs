@@ -18,7 +18,8 @@ pub enum Section {
     Notes,
     /// Kanban tasks + goals (a full-width board, not the editor pane).
     Tasks,
-    /// A flat namespace of `[[`-linked wiki pages.
+    /// A `[[`-linked namespace of wiki pages (globally-unique slugs), organisable
+    /// into purely-cosmetic folders.
     Wiki,
 }
 
@@ -426,8 +427,9 @@ pub struct Toast {
 pub enum MenuTarget {
     /// A note-tree entry (`is_dir` = folder).
     Note { id: String, is_dir: bool },
-    /// A wiki page, by slug.
-    Wiki { slug: String },
+    /// A wiki-tree entry, by wiki-relative path (`is_dir` = organisational
+    /// folder; otherwise a page whose slug is the path's last segment).
+    Wiki { path: String, is_dir: bool },
     /// A task card, by id.
     Task { id: String },
     /// A goal chip, by id.

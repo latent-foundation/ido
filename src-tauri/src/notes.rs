@@ -15,7 +15,11 @@ use crate::paths::{
 
 /// Recursively read `dir` into [`TreeNode`]s (folders first, then notes, each
 /// alphabetical). Hidden entries (dot-prefixed) and non-`.md` files are skipped.
-fn build_tree(dir: &Path, well: &Path) -> Vec<TreeNode> {
+///
+/// `pub(crate)` because it's a generic "folders + `.md` files → tree" reader with
+/// no notes-specific logic — the wiki section reuses it for its own tree so the
+/// two stay in lockstep.
+pub(crate) fn build_tree(dir: &Path, well: &Path) -> Vec<TreeNode> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -60,8 +64,9 @@ fn build_tree(dir: &Path, well: &Path) -> Vec<TreeNode> {
 /// case-insensitive filesystem (Windows/macOS default) a case-only rename like
 /// `Notes` → `notes` has `b.exists() == true` even though it's the very file
 /// being renamed; comparing canonical paths lets that recasing through instead
-/// of a false "name already taken".
-fn same_entry(a: &Path, b: &Path) -> bool {
+/// of a false "name already taken". `pub(crate)`: the wiki section's folder
+/// rename/move reuses it for the same case-insensitive-FS guard.
+pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
     match (fs::canonicalize(a), fs::canonicalize(b)) {
         (Ok(a), Ok(b)) => a == b,
         _ => false,

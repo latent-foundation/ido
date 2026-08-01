@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `ido` (井戸, "a well") is a local-first, markdown-based knowledge app in the **latent.**
 ecosystem. It is a Tauri desktop app with a Leptos (CSR → WASM) frontend. A **well** is any
 folder the user picks; inside it, three **sections** — **notes** (foldered markdown), **wiki**
-(a flat namespace of `[[`-linked pages), and **tasks** (a kanban board plus **goals**/milestones)
+(a `[[`-linked namespace of pages, whose slugs are globally unique but whose files can be
+organised into purely-cosmetic folders), and **tasks** (a kanban board plus **goals**/milestones)
 — each live as plain markdown files under `notes/`, `wiki/`, `tasks/`, with only rebuildable
 config/cache under `.ido/`. A left **rail** switches sections; per-pane **tab strips** keep
 several entries open (and a second editor pane can **split** off, side by side); a `Ctrl+K`
@@ -49,10 +50,15 @@ Two crates in one Cargo workspace:
   - **notes** (scoped under `notes/`): `list_tree` / `read_note` / `note_meta` / `write_note` /
     `create_note` / `create_folder` / `rename_entry` / `delete_entry` / `move_entry`. A note's
     **name is its file name** (independent of body); `note_meta` returns created/modified epoch ms.
-  - **wiki** (flat slugs under `wiki/`): `list_wiki` / `read_page` / `write_page` / `create_page` /
-    `ensure_page` / `rename_page` / `delete_page` / `backlinks`. `backlinks` is **cross-section**
-    (scans notes, wiki, *and* task/goal bodies for `[[links]]`); rename rewrites inbound
-    `[[links]]` across **all of them**.
+  - **wiki** (slugs under `wiki/`, optionally nested in organisational folders): `list_wiki`
+    (returns a `TreeNode` tree, reusing `notes::build_tree`) / `read_page` / `write_page` /
+    `create_page` (into a folder) / `ensure_page` / `rename_page` / `delete_page` /
+    `create_wiki_folder` / `rename_wiki_folder` / `delete_wiki_folder` / `move_wiki_entry`.
+    A page's **slug is globally unique** across the section (folders are purely cosmetic and never
+    touch identity), so a page is resolved by slug **anywhere in the tree** (`find_page`) and
+    moving it between folders keeps its slug — links never break. `backlinks` is **cross-section**
+    (scans notes, wiki — recursing folders — *and* task/goal bodies for `[[links]]`); rename
+    rewrites inbound `[[links]]` across **all of them**.
   - **tasks** (one md file per task under `tasks/`, frontmatter metadata): `task_columns` /
     `archive_days` / `list_tasks` / `create_task` / `move_task` / `reorder_column` / `set_task_field` /
     `update_task_body` / `rename_task` / `delete_task` / `restore_task`; **goals** (under
@@ -105,7 +111,7 @@ Both crates are split into small, documented modules (module-level `//!` + item 
     global tab/split/search keyboard shortcuts + the native-context-menu suppressor), `settings`,
     `search` (the `Ctrl+K` command palette), `toast` (undo / error toasts), `contextmenu` (the
     right-click menu).
-  - **sections:** `notes` (tree sidebar), `wiki` (page-list sidebar), `tasks` (full-width board ⇄
+  - **sections:** `notes` (tree sidebar), `wiki` (folder-tree sidebar), `tasks` (full-width board ⇄
     **calendar** view toggle + backlog + goals bar + detail drawers; `tasks/calendar.rs` is the
     month grid), `tree` (the recursive note tree), `datepicker` (a custom
     calendar popover replacing the un-themeable native `<input type=date>`; used by the task/goal drawers).
@@ -279,12 +285,22 @@ recursive-`impl Trait` cycle, E0720). New note/folder into the selected `target`
 rename, delete (notes + empty folders only), drag-to-move (`move_entry`; drop on the empty list
 area → well root).
 
-**Wiki** — a flat slug namespace under `wiki/`. `[[slug]]` / `[[slug|label]]` links are expanded
-pre-parse in `markdown.rs` to `ido:wiki/<slug>` anchors, clickable in Live *and* reading mode,
-creating the page on click if it doesn't exist. The backlinks panel (reading-view footer) is
-**cross-section** — it lists the notes *and* wiki pages that link here (`backlinks` → `LinkRef`s,
-opened via `State::open_entry`); inbound links are rewritten across both sections on rename. Notes
-can link *to* wiki pages but aren't `[[link]]` targets themselves (a deliberate non-goal for now).
+**Wiki** — a slug namespace under `wiki/`, with a **folder tree** for organisation only (the
+sidebar mirrors the notes `Tree`: create page/folder into a target folder, inline rename,
+drag-to-move, delete — via `create_wiki_folder` / `rename_wiki_folder` / `delete_wiki_folder` /
+`move_wiki_entry`, keyed on wiki-relative paths). A page's **slug stays globally unique** and is
+its only identity: `[[slug]]` / `[[slug|label]]` links are expanded pre-parse in `markdown.rs` to
+`ido:wiki/<slug>` anchors (folder-agnostic), clickable in Live *and* reading mode, creating the
+page on click if it doesn't exist. Because identity is the slug, **moving a page between folders
+changes nothing** — open tabs and `[[links]]` are untouched; only a *rename* (which changes the
+slug) re-points tabs (`sync_page_id`) and rewrites inbound links. `State` carries a `wiki_tree`
+(the sidebar) beside the flat `wiki` slug list (existence checks), kept in sync by `set_wiki`; the
+wiki tree has its own `wiki_expanded` / `wiki_renaming` / `wiki_dragging` / `wiki_drag_over` /
+`wiki_target` signals (parallel to the notes tree's). The backlinks panel (reading-view footer) is
+**cross-section** — it lists the notes *and* wiki pages (in any folder) that link here (`backlinks`
+→ `LinkRef`s, opened via `State::open_entry`); inbound links are rewritten across all sections on
+rename. Notes can link *to* wiki pages but aren't `[[link]]` targets themselves (a deliberate
+non-goal for now).
 
 **Tasks** — a kanban board, one markdown file per task under `tasks/` with frontmatter (`status`
 = column, plus `title` / `priority` / `tags` / `order` / `due` / `goal` / `repeat` / `completed`).
@@ -407,12 +423,13 @@ re-renders. `workspace.rs` also installs a global `dragover`/`drop` fallback tha
 anywhere) doesn't navigate the webview instead of being silently ignored.
 
 **What's next** — the tasks P0/P1/P2 batches have **all landed** (a Notion import script was
-considered and dropped). The next big bet is the **MCP server + semantic search** over the store,
-specced end-to-end in [docs/mcp-server.md](docs/mcp-server.md): extract the store into a
+considered and dropped), and the wiki grew **organisational folders** (slugs stay globally unique,
+links stay folder-agnostic). The next big bet is the **MCP server + semantic search** over the
+store, specced end-to-end in [docs/mcp-server.md](docs/mcp-server.md): extract the store into a
 tauri-free `ido-store` crate, add an `rmcp` + stdio `ido-mcp` binary with seven read-only tools,
 then a local-embedding (fastembed) brute-force vector index fused with the existing lexical scan.
 Also open: the calendar's remaining phases (ICS export, read-only external feeds), small rough
 edges (N-way / persisted split, deeper goal-status surfacing), and the other bigger bets, none
 started: **local-LLM / Gemma** in-app assistance (on-device, private) and **web sync**
-(self-hosted + optional cloud, end-to-end encrypted). Notes-as-`[[link]]`-targets and wiki
-folders are deliberate non-goals.
+(self-hosted + optional cloud, end-to-end encrypted). Notes-as-`[[link]]`-targets remain a
+deliberate non-goal.

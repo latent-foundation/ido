@@ -26,7 +26,7 @@ impl State {
                 ipc::migrate_well(path.clone()).await;
                 self.well.set(Some(w));
                 self.tree.set(ipc::list_tree(path.clone()).await);
-                self.wiki.set(ipc::list_wiki(path.clone()).await);
+                self.set_wiki(ipc::list_wiki(path.clone()).await);
                 self.columns.set(ipc::task_columns(path.clone()).await);
                 self.archive_days.set(ipc::archive_days(path.clone()).await);
                 self.saved_views.set(ipc::saved_views(path.clone()).await);
@@ -51,7 +51,7 @@ impl State {
         self.reset_panes();
         self.clear_assets();
         self.section.set(Section::Notes);
-        self.wiki.set(Vec::new());
+        self.set_wiki(Vec::new());
         self.tasks.set(Vec::new());
         self.active_task.set(None);
         self.goals.set(Vec::new());
@@ -62,13 +62,15 @@ impl State {
         self.show_archive.set(false);
         self.target.set(String::new());
         self.expanded.set(HashSet::new());
+        self.wiki_target.set(String::new());
+        self.wiki_expanded.set(HashSet::new());
         let path = w.path.clone();
         self.well.set(Some(w));
         spawn_local(async move {
             ipc::restore_window().await;
             ipc::migrate_well(path.clone()).await;
             self.tree.set(ipc::list_tree(path.clone()).await);
-            self.wiki.set(ipc::list_wiki(path.clone()).await);
+            self.set_wiki(ipc::list_wiki(path.clone()).await);
             self.columns.set(ipc::task_columns(path.clone()).await);
             self.archive_days.set(ipc::archive_days(path.clone()).await);
             self.saved_views.set(ipc::saved_views(path.clone()).await);
@@ -83,7 +85,7 @@ impl State {
         self.well.set(None);
         self.reset_panes();
         self.tree.set(Vec::new());
-        self.wiki.set(Vec::new());
+        self.set_wiki(Vec::new());
         self.tasks.set(Vec::new());
         self.active_task.set(None);
         self.goals.set(Vec::new());

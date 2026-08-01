@@ -43,6 +43,18 @@ pub const COMMANDS: [(&str, &str, &str); 5] = [
     ("cmd:settings", "settings", "settings"),
 ];
 
+/// Collect every page slug (a non-folder node's `name`) in a wiki tree, depth
+/// first — the flat list behind `State::wiki`.
+fn collect_slugs(nodes: &[TreeNode], out: &mut Vec<String>) {
+    for n in nodes {
+        if n.is_dir {
+            collect_slugs(&n.children, out);
+        } else {
+            out.push(n.name.clone());
+        }
+    }
+}
+
 /// Command entries whose label matches `query` (all when empty), as synthetic
 /// `SearchHit`s so they appear in the palette alongside content hits.
 fn command_hits(query: &str) -> Vec<SearchHit> {
@@ -74,8 +86,12 @@ pub struct State {
     // --- section content --------------------------------------------------
     /// The open well's tree of folders and notes (the notes section).
     pub tree: RwSignal<Vec<TreeNode>>,
-    /// The wiki section's pages, by slug (alphabetical).
+    /// Every wiki page's slug, flattened across all folders — backs existence
+    /// checks (open-on-click, undo). Kept in sync with `wiki_tree` by `set_wiki`.
     pub wiki: RwSignal<Vec<String>>,
+    /// The wiki section's tree of organisational folders and pages (page node
+    /// `name` = slug; folders are display-only). Drives the wiki sidebar.
+    pub wiki_tree: RwSignal<Vec<TreeNode>>,
 
     // --- image attachments --------------------------------------------------
     /// Cache of resolved asset `data:` URLs for the open well, keyed by
@@ -155,19 +171,31 @@ pub struct State {
     /// Where the dragged tab would land — drives the drop indicator.
     pub tab_drop: RwSignal<Option<TabDrop>>,
 
-    // --- sidebar editing (notes tree + wiki list) -------------------------
-    /// Ids of expanded folders.
+    // --- notes-tree sidebar editing ---------------------------------------
+    /// Ids of expanded notes folders.
     pub expanded: RwSignal<HashSet<String>>,
-    /// `(id, is_dir)` of the tree entry being renamed inline, if any.
+    /// `(id, is_dir)` of the notes-tree entry being renamed inline, if any.
     pub renaming: RwSignal<Option<(String, bool)>>,
-    /// Slug of the wiki page being renamed inline in the page list, if any.
-    pub page_renaming: RwSignal<Option<String>>,
-    /// `(id, is_dir)` of the entry being dragged, if any.
+    /// `(id, is_dir)` of the notes entry being dragged, if any.
     pub dragging: RwSignal<Option<(String, bool)>>,
-    /// Id of the folder currently hovered as a drop target.
+    /// Id of the notes folder currently hovered as a drop target.
     pub drag_over: RwSignal<Option<String>>,
-    /// Folder that new notes/folders are created into (`""` = root).
+    /// Notes folder that new notes/folders are created into (`""` = root).
     pub target: RwSignal<String>,
+
+    // --- wiki-tree sidebar editing ----------------------------------------
+    /// Wiki-relative ids of expanded wiki folders.
+    pub wiki_expanded: RwSignal<HashSet<String>>,
+    /// `(path, is_dir)` of the wiki-tree entry being renamed inline, if any.
+    /// A page (`is_dir == false`) renames by its slug (the path's last segment,
+    /// rewriting links); a folder renames purely on disk.
+    pub wiki_renaming: RwSignal<Option<(String, bool)>>,
+    /// `(path, is_dir)` of the wiki entry being dragged, if any.
+    pub wiki_dragging: RwSignal<Option<(String, bool)>>,
+    /// Wiki-relative id of the wiki folder currently hovered as a drop target.
+    pub wiki_drag_over: RwSignal<Option<String>>,
+    /// Wiki folder that new pages/folders are created into (`""` = wiki root).
+    pub wiki_target: RwSignal<String>,
 
     // --- create-a-well form (launch screen) -------------------------------
     /// Whether the create-a-well form is showing (launch screen).
@@ -213,6 +241,7 @@ impl State {
             // section content
             tree: RwSignal::new(Vec::new()),
             wiki: RwSignal::new(Vec::new()),
+            wiki_tree: RwSignal::new(Vec::new()),
 
             // image attachments
             assets: RwSignal::new(HashMap::new()),
@@ -251,13 +280,19 @@ impl State {
             tab_drag: RwSignal::new(None),
             tab_drop: RwSignal::new(None),
 
-            // sidebar editing
+            // notes-tree sidebar editing
             expanded: RwSignal::new(HashSet::new()),
             renaming: RwSignal::new(None),
-            page_renaming: RwSignal::new(None),
             dragging: RwSignal::new(None),
             drag_over: RwSignal::new(None),
             target: RwSignal::new(String::new()),
+
+            // wiki-tree sidebar editing
+            wiki_expanded: RwSignal::new(HashSet::new()),
+            wiki_renaming: RwSignal::new(None),
+            wiki_dragging: RwSignal::new(None),
+            wiki_drag_over: RwSignal::new(None),
+            wiki_target: RwSignal::new(String::new()),
 
             // create-a-well form
             creating: RwSignal::new(false),
@@ -322,7 +357,7 @@ impl State {
                 }
                 EntryKind::WikiPage => {
                     ipc::write_page(w.path.clone(), u.id.clone(), u.content).await;
-                    self.wiki.set(ipc::list_wiki(w.path).await);
+                    self.set_wiki(ipc::list_wiki(w.path).await);
                     self.open_wiki(u.id);
                 }
                 EntryKind::Task => {
@@ -450,6 +485,16 @@ impl State {
         for p in self.panes {
             self.load_pane(p);
         }
+    }
+
+    /// Update both wiki signals from a freshly-listed tree: `wiki_tree` drives
+    /// the sidebar, and the flattened `wiki` slug list backs existence checks
+    /// (open-on-click, undo). Kept together so they can never drift.
+    fn set_wiki(self, tree: Vec<TreeNode>) {
+        let mut slugs = Vec::new();
+        collect_slugs(&tree, &mut slugs);
+        self.wiki.set(slugs);
+        self.wiki_tree.set(tree);
     }
 
     /// Persist `src` to pane `p`'s active tab backing file (note or wiki page).

@@ -120,7 +120,7 @@ impl State {
             }
             "cmd:new-page" => {
                 self.section.set(Section::Wiki);
-                self.add_page();
+                self.add_page(String::new());
             }
             "cmd:new-task" => {
                 self.section.set(Section::Tasks);

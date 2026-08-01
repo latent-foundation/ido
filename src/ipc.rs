@@ -151,6 +151,34 @@ struct RenamePageArg {
 }
 
 #[derive(Serialize)]
+struct CreatePageArg {
+    well: String,
+    folder: String,
+}
+
+#[derive(Serialize)]
+struct WikiPathArg {
+    well: String,
+    path: String,
+}
+
+#[derive(Serialize)]
+struct RenameWikiFolderArg {
+    well: String,
+    path: String,
+    name: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MoveWikiEntryArg {
+    well: String,
+    path: String,
+    is_dir: bool,
+    dest: String,
+}
+
+#[derive(Serialize)]
 struct CreateTaskArg {
     well: String,
     status: String,
@@ -311,8 +339,8 @@ pub async fn move_entry(well: String, id: String, is_dir: bool, dest: String) ->
 
 // --- wiki -------------------------------------------------------------------
 
-/// The wiki's page slugs, alphabetical.
-pub async fn list_wiki(well: String) -> Vec<String> {
+/// The wiki's tree of folders and pages (folders first, then pages by slug).
+pub async fn list_wiki(well: String) -> Vec<TreeNode> {
     deser(call("list_wiki", &WellArg { well }).await).unwrap_or_default()
 }
 
@@ -338,9 +366,58 @@ pub async fn write_page(well: String, slug: String, content: String) {
     .await;
 }
 
-/// Create a new uniquely-named empty page; returns its slug.
-pub async fn create_page(well: String) -> Option<String> {
-    deser(call("create_page", &WellArg { well }).await)
+/// Create a new uniquely-named empty page inside `folder` (`""` = wiki root);
+/// returns its (section-wide-unique) slug.
+pub async fn create_page(well: String, folder: String) -> Option<String> {
+    deser(call("create_page", &CreatePageArg { well, folder }).await)
+}
+
+/// Create an organisational folder in `parent` (`""` = wiki root); returns its
+/// wiki-relative id.
+pub async fn create_wiki_folder(well: String, parent: String) -> Option<String> {
+    deser(call("create_wiki_folder", &ParentArg { well, parent }).await)
+}
+
+/// Rename a wiki folder in place; returns the new id, or the error string.
+pub async fn rename_wiki_folder(
+    well: String,
+    path: String,
+    name: String,
+) -> Result<String, String> {
+    call_res(
+        "rename_wiki_folder",
+        &RenameWikiFolderArg { well, path, name },
+    )
+    .await
+}
+
+/// Delete an empty wiki folder; `true` on success.
+pub async fn delete_wiki_folder(well: String, path: String) -> bool {
+    call("delete_wiki_folder", &WikiPathArg { well, path })
+        .await
+        .is_ok()
+}
+
+/// Move a wiki page or folder into `dest` (`""` = wiki root); returns the new id.
+/// A page keeps its slug (only the file relocates), so its links never change.
+pub async fn move_wiki_entry(
+    well: String,
+    path: String,
+    is_dir: bool,
+    dest: String,
+) -> Option<String> {
+    deser(
+        call(
+            "move_wiki_entry",
+            &MoveWikiEntryArg {
+                well,
+                path,
+                is_dir,
+                dest,
+            },
+        )
+        .await,
+    )
 }
 
 /// Create `slug` if it doesn't exist (backs "create on click" for a wikilink).

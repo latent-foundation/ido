@@ -215,8 +215,51 @@ fn menu_items(state: State, target: MenuTarget) -> AnyView {
             }
             .into_any()
         }
-        MenuTarget::Wiki { slug } => {
-            let (open, ren, del) = (slug.clone(), slug.clone(), slug);
+        MenuTarget::Wiki { path, is_dir } if is_dir => {
+            let (a, b, c, d) = (path.clone(), path.clone(), path.clone(), path);
+            view! {
+                <MenuItem
+                    icon="file-plus"
+                    label="new page"
+                    action=move |_| {
+                        state.add_page(a.clone());
+                        state.close_menu();
+                    }
+                />
+                <MenuItem
+                    icon="folder-plus"
+                    label="new folder"
+                    action=move |_| {
+                        state.add_wiki_folder(b.clone());
+                        state.close_menu();
+                    }
+                />
+                <MenuSep />
+                <MenuItem
+                    icon="pencil"
+                    label="rename"
+                    action=move |_| {
+                        state.wiki_renaming.set(Some((c.clone(), true)));
+                        state.close_menu();
+                    }
+                />
+                <MenuSep />
+                <MenuItem
+                    icon="trash"
+                    label="delete"
+                    action=move |_| {
+                        state.remove_wiki_entry(d.clone(), true);
+                        state.close_menu();
+                    }
+                />
+            }
+            .into_any()
+        }
+        MenuTarget::Wiki { path, .. } => {
+            let parent = parent_of(&path);
+            let slug = path.rsplit('/').next().unwrap_or(&path).to_string();
+            let (open, ren, del) = (slug, path.clone(), path);
+            let (pn, pf) = (parent.clone(), parent);
             view! {
                 <MenuItem
                     icon="book"
@@ -230,7 +273,7 @@ fn menu_items(state: State, target: MenuTarget) -> AnyView {
                     icon="pencil"
                     label="rename"
                     action=move |_| {
-                        state.page_renaming.set(Some(ren.clone()));
+                        state.wiki_renaming.set(Some((ren.clone(), false)));
                         state.close_menu();
                     }
                 />
@@ -239,7 +282,15 @@ fn menu_items(state: State, target: MenuTarget) -> AnyView {
                     icon="file-plus"
                     label="new page"
                     action=move |_| {
-                        state.add_page();
+                        state.add_page(pn.clone());
+                        state.close_menu();
+                    }
+                />
+                <MenuItem
+                    icon="folder-plus"
+                    label="new folder"
+                    action=move |_| {
+                        state.add_wiki_folder(pf.clone());
                         state.close_menu();
                     }
                 />
@@ -248,7 +299,7 @@ fn menu_items(state: State, target: MenuTarget) -> AnyView {
                     icon="trash"
                     label="delete"
                     action=move |_| {
-                        state.remove_page(del.clone());
+                        state.remove_wiki_entry(del.clone(), false);
                         state.close_menu();
                     }
                 />
