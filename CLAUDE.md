@@ -29,7 +29,10 @@ This app deliberately owns very little. It composes two shared upstream layers:
   find tokens/fonts and renders unstyled.
 - **`latent-ui`** (Cargo git dep, pinned tag in [Cargo.toml](Cargo.toml)) — shared Rust/Leptos
   behavior: `ThemeToggle` and the theme machinery (`theme::initial_theme`,
-  `theme::setup_theme_effect`). Ships no CSS.
+  `theme::setup_theme_effect`), `Icon` (the ecosystem's only icon source), and
+  `platform::is_mac`. Ships no CSS. **Promotion rule** (from its README): a component graduates
+  out of an app and into this crate only once a *second* consumer reveals the real API shape —
+  which is why the board, tabs, tree and editor stay here despite looking generic.
 
 **This repo owns only `src/` (frontend logic) and `style/app.css` (page layout).** Never
 restate or fork the upstream layers here.
@@ -104,9 +107,10 @@ Both crates are split into small, documented modules (module-level `//!` + item 
   `[[wikilinks]]` expanded **pre-parse**; LaTeX → MathML via latex2mathml; raw HTML sanitised to
   text; `Event`-transform seam for `#tags`/etc.), `dates` (shared **Monday-first** date math —
   `weekday` / `add_days` / `add_months` / `ymd` + tests; `today()` reads `js_sys` and must never
-  run in host-side tests — pure helpers take "today" as a parameter), `icon`, `app` (root), and
+  run in host-side tests — pure helpers take "today" as a parameter), `app` (root), and
   `components/`:
-  - **shell:** `titlebar` (custom chrome + well name; per-OS controls), `launch` (launcher), `rail` (section switcher
+  - **shell:** `titlebar` (custom chrome + per-OS controls; its caption is a `title: Signal<String>`
+    **prop**, not a `State` read — ido passes the well name), `launch` (launcher), `rail` (section switcher
     + 井戸 switch-well + **search** + settings), `workspace` (rail + section sidebar + editor pane(s);
     global tab/split/search keyboard shortcuts + the native-context-menu suppressor), `settings`,
     `search` (the `Ctrl+K` command palette), `toast` (undo / error toasts), `contextmenu` (the
@@ -187,9 +191,11 @@ cargo check -p ido-ui                      # fast type-check of just the fronten
   `data-theme` before CSS loads; ido **defaults to light** (it's a writing surface). The script,
   `latent_ui::theme::initial_theme()`, and `setup_theme_effect` keep DOM + `localStorage`
   (`"latent-theme"`) in sync.
-- **Icons are Lucide only** — and inlined as SVG (the `Icon` component in `src/icon.rs`), not via
-  the CDN script (it can't re-bind icons across reactive re-renders). Use 1.6px stroke and
-  `currentColor`. Never emoji, never hand-drawn.
+- **Icons are Lucide only** — and inlined as SVG, not via the CDN script (it can't re-bind icons
+  across reactive re-renders). 1.6px stroke, `currentColor`; never emoji, never hand-drawn. The
+  renderer is **upstream**: `latent_ui::Icon` (styled by `.icon` in latent-design's
+  `components.css`). **Add new glyphs to the table in `latent-ui`, not here** — ido owns no icon
+  module. App-specific tweaks are ancestor-scoped in `style/app.css` (`.ido-cal-goal .icon { … }`).
 - **Brand:** lowercase voice; the `latent.` mark is the umbrella identity **only** — ido's mark
   is the 井戸 kanji. The current app icon ([src-tauri/app-icon.svg](src-tauri/app-icon.svg)) uses
   the latent mark as a temporary placeholder.
@@ -202,8 +208,8 @@ cargo check -p ido-ui                      # fast type-check of just the fronten
   the app is invisible. Dragging uses `data-tauri-drag-region` on `.ido-titlebar`, which needs
   `core:window:allow-start-dragging` in `capabilities/default.json`; the min/maximize/close
   buttons call Rust commands, so they need no capability. The controls **follow the host OS**
-  (`platform::is_mac`, UA-sniffed — the frontend is WASM, so `cfg!(target_os)` describes the wrong
-  machine): three latent-palette dots on the left on macOS, a minimize/maximize/close row on the
+  (`latent_ui::platform::is_mac`, UA-sniffed — the frontend is WASM, so `cfg!(target_os)` describes
+  the wrong machine): three latent-palette dots on the left on macOS, a minimize/maximize/close row on the
   right elsewhere. The **third control routes per platform** (`window::toggle_zoom`): macOS gets
   **native fullscreen**, because only that gives the window its own Space — which is what makes
   `Ctrl+←/→` swipe between it and the desktop — whereas `maximize()` on a borderless window can

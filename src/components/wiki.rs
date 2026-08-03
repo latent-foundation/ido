@@ -4,9 +4,9 @@
 //! [`crate::components::tree`], but page identity is the slug (the tree path's
 //! last segment), so a folder move never disturbs an open tab or a `[[link]]`.
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 
-use crate::icon::Icon;
 use crate::model::TreeNode;
 use crate::state::{MenuTarget, State, parent_of};
 

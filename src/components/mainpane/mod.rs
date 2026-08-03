@@ -22,6 +22,7 @@
 //! live block editor + cursor math), [`reading`] (metadata + backlinks), and
 //! [`doc`] (the drawer's compact [`DocEditor`]). This module hosts [`MainPane`].
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
@@ -29,7 +30,6 @@ use self::block::BlockEditor;
 use self::reading::{BacklinksPanel, NoteMetaRow};
 use self::source::SourceEditor;
 use super::tabs::TabStrip;
-use crate::icon::Icon;
 use crate::markdown;
 use crate::state::{MenuTarget, Mode, Pane, State, TabDrop};
 

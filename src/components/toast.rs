@@ -1,8 +1,8 @@
 //! A transient toast (bottom-centre) for delete-undo and error messages.
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 
-use crate::icon::Icon;
 use crate::state::State;
 
 /// Shows `state.toast` while set; "undo" restores a soft-deleted note / page.

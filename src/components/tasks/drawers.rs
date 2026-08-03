@@ -11,6 +11,7 @@
 //! open — while only display-only bits (existence → auto-close, the archived
 //! flag) read `state.tasks` / `state.goals` reactively.
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 
 use super::logic::col_label;
@@ -18,7 +19,6 @@ use super::tagsinput::TagsInput;
 use crate::blocks;
 use crate::components::datepicker::DatePicker;
 use crate::components::mainpane::DocEditor;
-use crate::icon::Icon;
 use crate::model::Task;
 use crate::state::{Buffer, Mode, State};
 

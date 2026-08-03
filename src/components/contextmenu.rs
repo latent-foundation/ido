@@ -2,11 +2,11 @@
 //! the latent. system. Driven by `state.menu` (set by each surface's
 //! `on:contextmenu`); mounted once in the workspace. Esc or a click away closes.
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::{JsCast, JsValue};
 
-use crate::icon::Icon;
 use crate::state::{MenuTarget, Mode, State, parent_of};
 
 /// `(document, document.<name>)` — `execCommand` isn't bound in this web-sys, so

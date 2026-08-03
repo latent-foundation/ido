@@ -1,9 +1,9 @@
 //! The archive view (shown while the toolbar's archive toggle is on): archived
 //! tasks and goals, each restorable or deletable.
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 
-use crate::icon::Icon;
 use crate::model::{Goal, Task};
 use crate::state::State;
 

@@ -6,36 +6,28 @@
 //! system red/amber/green, and revealing their glyphs on hover of the cluster.
 //! Everywhere else they stay a right-hand minimize / maximize / close row.
 
+use latent_ui::Icon;
+use latent_ui::platform::is_mac;
 use leptos::prelude::*;
 
-use crate::icon::Icon;
-use crate::platform::is_mac;
 use crate::state::State;
 
 /// The title bar. The bar itself is a `data-tauri-drag-region` (drag to move the
-/// window); the controls call Rust window commands. The open well's name sits
-/// alongside them, visible across every section.
+/// window); the controls call Rust window commands. `title` is displayed
+/// alongside them, visible across every section — it is a prop rather than a
+/// read of [`State`] so the bar stays a presentation component, agnostic about
+/// where its caption comes from (ido passes the open well's name).
 #[component]
-pub fn TitleBar() -> impl IntoView {
+pub fn TitleBar(#[prop(into)] title: Signal<String>) -> impl IntoView {
     let mac = is_mac();
     view! {
         <div class="ido-titlebar" class:mac=mac data-tauri-drag-region="">
             {mac.then(|| view! { <MacLights /> })}
-            <WellName />
+            <span class="ido-title-well" data-tauri-drag-region="">
+                {move || title.get()}
+            </span>
             {(!mac).then(|| view! { <WinControls /> })}
         </div>
-    }
-}
-
-/// The open well's name — quiet metadata, centred on macOS (that platform's
-/// title convention) and leading everywhere else.
-#[component]
-fn WellName() -> impl IntoView {
-    let state = expect_context::<State>();
-    view! {
-        <span class="ido-title-well" data-tauri-drag-region="">
-            {move || state.well.get().map(|w| w.name).unwrap_or_default()}
-        </span>
     }
 }
 

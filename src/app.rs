@@ -27,7 +27,9 @@ pub fn App() -> impl IntoView {
 
     view! {
         <div class="ido-shell">
-            <TitleBar />
+            <TitleBar title=Signal::derive(move || {
+                state.well.get().map(|w| w.name).unwrap_or_default()
+            }) />
             <div class="ido-app">
                 {move || {
                     if state.well.get().is_none() {

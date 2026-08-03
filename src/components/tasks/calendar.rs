@@ -8,12 +8,12 @@
 //! scope; `hide done` hides done-column chips); sort and the backlog don't
 //! apply here — days are sets, not sequences.
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use super::logic::*;
 use crate::dates::{self, MONTHS, WEEKDAYS};
-use crate::icon::Icon;
 use crate::model::Task;
 use crate::state::{MenuTarget, State};
 

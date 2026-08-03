@@ -1,11 +1,11 @@
 //! The goals bar above the board: an "all" chip plus one chip per goal (with
 //! progress + target date), draggable to reorder. A chip scopes the board.
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 
 use super::logic::*;
 use crate::dates::this_year;
-use crate::icon::Icon;
 use crate::model::Goal;
 use crate::state::{MenuTarget, State};
 

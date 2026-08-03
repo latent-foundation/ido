@@ -1,9 +1,9 @@
 //! The recursive note-tree sidebar. [`Tree`] renders one level; `TreeRow`
 //! renders a row (folder or note) with inline rename, delete, and drag-and-drop.
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 
-use crate::icon::Icon;
 use crate::model::TreeNode;
 use crate::state::{MenuTarget, State, parent_of};
 

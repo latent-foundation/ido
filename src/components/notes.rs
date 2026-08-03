@@ -2,10 +2,10 @@
 //! recursive folder tree. The editing surface is the shared
 //! [`crate::components::mainpane`]; this contributes only the left sidebar.
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 
 use crate::components::tree::Tree;
-use crate::icon::Icon;
 use crate::state::State;
 
 /// The notes sidebar (`<aside>`), shown when the notes section is active.

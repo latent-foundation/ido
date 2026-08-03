@@ -9,11 +9,11 @@
 //! calendar itself always seeds from the date part (a raw `parse_ymd` on the
 //! full timed value would fail and leave the picker unseeded).
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::dates::{MONTHS, MONTHS_SHORT, WEEKDAYS, days_in_month, parse_ymd, today, weekday, ymd};
-use crate::icon::Icon;
 
 /// Split a `due` value into its `(date, time)` parts on the first space —
 /// `time` is `""` when `due` is date-only (or empty).

@@ -8,10 +8,10 @@
 //! split. An insertion line marks where a drop lands. Keyboard switching lives in
 //! [`crate::components::workspace`].
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
-use crate::icon::Icon;
 use crate::state::{MenuTarget, Pane, State, Tab, TabDrop};
 
 /// The strip of open tabs for `pane` (index `idx`); nothing when it has none.

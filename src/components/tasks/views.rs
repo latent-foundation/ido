@@ -12,10 +12,10 @@
 //! non-empty input clears on the first Escape and the popover closes on the
 //! second.
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
-use crate::icon::Icon;
 use crate::state::State;
 
 /// The toolbar's "views" dropdown button + its popover.

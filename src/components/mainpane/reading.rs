@@ -1,10 +1,10 @@
 //! Reading-view chrome: the note metadata row (folder + creation date) and the
 //! cross-section backlinks panel.
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 use wasm_bindgen::JsValue;
 
-use crate::icon::Icon;
 use crate::state::{Pane, State};
 
 // ═══════════════════════════════════════════════════ Reading metadata ═════════

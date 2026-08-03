@@ -4,6 +4,7 @@
 //! how orphan-status rows sit in that ordering). The toolbar's view toggle
 //! swaps the board for the month [`CalendarView`].
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 
 use super::archive::ArchivePanel;
@@ -14,7 +15,6 @@ use super::logic::*;
 use super::table::TableView;
 use super::views::ViewsMenu;
 use crate::dates::{this_year, today_ymd};
-use crate::icon::Icon;
 use crate::model::Task;
 use crate::state::{MenuTarget, State, TaskSort, TaskView};
 

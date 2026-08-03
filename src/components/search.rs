@@ -2,9 +2,9 @@
 //! rail's search button) that searches notes, wiki, and tasks at once. ↑/↓ move
 //! the selection, Enter opens it, Esc (or a backdrop click) dismisses.
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 
-use crate::icon::Icon;
 use crate::model::SearchHit;
 use crate::state::State;
 

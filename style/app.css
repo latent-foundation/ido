@@ -90,7 +90,7 @@ body {
 }
 
 /* An 8px glyph needs a heavier stroke than the 1.6 icon default to read at all. */
-.ido-mac-dot .ido-icon {
+.ido-mac-dot .icon {
   stroke-width: 3.2;
 }
 
@@ -1145,11 +1145,8 @@ body {
   right: var(--space-4);
 }
 
-/* icons ================================================================= */
-.ido-icon {
-  flex: none;
-  display: block;
-}
+/* icons — base `.icon` rule lives in latent-design's components.css; only
+   ido-specific, ancestor-scoped tweaks belong here ====================== */
 
 /* sidebar toolbar ====================================================== */
 .ido-toolbar {
@@ -1403,7 +1400,7 @@ body {
   background: var(--color-bg-subtle);
 }
 
-.ido-backlink .ido-icon {
+.ido-backlink .icon {
   flex: none;
   color: var(--color-text-muted);
 }
@@ -2181,7 +2178,7 @@ select.ido-drawer-input {
   text-align: left;
 }
 
-.ido-date-trigger .ido-icon {
+.ido-date-trigger .icon {
   flex: none;
   color: var(--color-text-muted);
 }
@@ -2964,7 +2961,7 @@ select.ido-drawer-input {
   border-color: var(--color-border-strong);
 }
 
-.ido-cal-goal .ido-icon {
+.ido-cal-goal .icon {
   flex: none;
   color: var(--color-text-muted);
 }
@@ -2975,7 +2972,7 @@ select.ido-drawer-input {
   color: var(--color-accent);
 }
 
-.ido-cal-goal.overdue .ido-icon {
+.ido-cal-goal.overdue .icon {
   color: var(--color-accent);
 }
 
@@ -3035,7 +3032,7 @@ select.ido-drawer-input {
   border-color: var(--color-accent);
 }
 
-.ido-cal-chip.overdue .ido-icon {
+.ido-cal-chip.overdue .icon {
   flex: none;
   color: var(--color-accent);
 }

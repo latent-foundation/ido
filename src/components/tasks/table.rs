@@ -15,11 +15,11 @@
 
 use std::cmp::Ordering;
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 
 use super::logic::*;
 use crate::dates::{this_year, today_ymd};
-use crate::icon::Icon;
 use crate::model::Task;
 use crate::state::{MenuTarget, State};
 

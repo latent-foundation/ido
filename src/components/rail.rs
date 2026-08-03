@@ -4,11 +4,11 @@
 //! (inlined via [`Icon`]); the active section carries the accent. The 井戸 mark
 //! at the top switches wells (back to the launcher); settings sit at the bottom.
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 
 use crate::components::tasks::overdue_count;
 use crate::dates;
-use crate::icon::Icon;
 use crate::state::{Section, State};
 
 /// The far-left rail. Reads/sets `state.section`; opens the settings modal.

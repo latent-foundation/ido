@@ -1,10 +1,10 @@
 //! The settings modal — theme, the open well's path, and the task board's
 //! columns; a home for preferences as they appear.
 
+use latent_ui::Icon;
 use latent_ui::ThemeToggle;
 use leptos::prelude::*;
 
-use crate::icon::Icon;
 use crate::state::State;
 
 /// A centred modal over the app, shown while `settings_open` is set. Clicking

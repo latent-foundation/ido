@@ -1,11 +1,11 @@
 //! The drawer's self-contained three-mode editor. See [`DocEditor`].
 
+use latent_ui::Icon;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use super::block::BlockEditor;
 use super::source::SourceEditor;
-use crate::icon::Icon;
 use crate::markdown;
 use crate::state::{Buffer, Mode, State};
 

@@ -46,7 +46,8 @@ pulldown-cmark = { version = "0.13", default-features = false, features = [
 # LaTeX → MathML for inline ($…$) and display ($$…$$) math (pure Rust, WASM-friendly).
 latex2mathml = "0.2"
 # Shared latent. UI — pinned git dep; use a [patch] override for local dev:
-latent-ui = { git = "https://github.com/latent-foundation/latent-ui", tag = "v0.1.0" }
+latent-ui = { git = "https://github.com/latent-foundation/latent-ui", tag = "v0.2.0" }
 
 [workspace]
 members = ["src-tauri"]
+
