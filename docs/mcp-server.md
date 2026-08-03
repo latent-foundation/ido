@@ -12,10 +12,10 @@ retrieval stack.
 **TL;DR:** Split the store out of `src-tauri` into a tauri-free `ido-store` crate, put a second
 binary (`ido-mcp`, [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) + stdio) beside it,
 and ship **seven read-only tools**. Semantic search is a separate, additive layer: chunk markdown
-→ embed locally with [fastembed](https://docs.rs/fastembed) → **brute-force cosine over an
-in-memory f32 matrix** (no ANN index — a personal well is far too small to need one) → fuse with
-the existing lexical scan via reciprocal rank fusion. Writes come last, gated, and only after the
-read path is trusted.
+→ embed locally with [candle](https://github.com/huggingface/candle) (**pure Rust, no ONNX
+Runtime, nothing native to bundle**) → **brute-force cosine over an in-memory f32 matrix** (no ANN
+index — a personal well is far too small to need one) → fuse with the existing lexical scan via
+reciprocal rank fusion. Writes come last, gated, and only after the read path is trusted.
 
 ---
 
@@ -38,9 +38,10 @@ read path is trusted.
   separate doc.
 - **Remote / hosted MCP** (Streamable HTTP + OAuth). Phase 2 in the ecosystem doc; only on a
   concrete second-client trigger. The tool code is transport-agnostic, so this is not thrown away.
-- **A local LLM in-app.** The embedding model here is a 100–300 MB retrieval model, not a
-  generative one. The Gemma/on-device-assistant ambition in [`CLAUDE.md`](../CLAUDE.md) is
-  adjacent and shares the ONNX/model-cache plumbing, but is out of scope.
+- **A local LLM in-app.** The embedding model here is a ~130 MB retrieval model, not a generative
+  one. The Gemma/on-device-assistant ambition in [`CLAUDE.md`](../CLAUDE.md) is adjacent and now
+  shares more than plumbing — candle runs generative models too, so the model-cache and device
+  setup built here is directly reusable — but it is out of scope.
 - **Notes as `[[link]]` targets** and **wiki folders** — still deliberate non-goals of the store.
 
 ---
@@ -174,11 +175,12 @@ before this document. What matters for a local stdio server:
 
 ### 4.2 SDK
 
-**[`rmcp`](https://crates.io/crates/rmcp) 3.0.0-beta.2** (2026-07-24) implements the stable
-2026-07-28 spec with back-compat to 2025-11-25 and earlier. Features needed:
+**[`rmcp`](https://crates.io/crates/rmcp) 3.1.0** implements the stable 2026-07-28 spec with
+back-compat to 2025-11-25 and earlier. 3.0 has shipped final — the beta this doc originally
+targeted is obsolete. Features needed:
 
 ```toml
-rmcp = { version = "3.0.0-beta.2", features = ["server", "macros", "transport-io", "schemars"] }
+rmcp = { version = "3.1", features = ["server", "macros", "transport-io", "schemars"] }
 ```
 
 Shape (from the SDK README; `#[tool_router(server_handler)]` generates both the router and the
@@ -214,9 +216,8 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-⚠️ **`3.0.0-beta.2` is a beta.** Pin it exactly, and expect one churn pass before 3.0 final. This
-is the cost of tracking a spec that shipped last week; the alternative (targeting 2025-11-25) means
-a migration later anyway.
+Keep the tool *bodies* in `ido-store` and the `rmcp` layer thin regardless — the SDK is young and
+the spec moves; a thin seam makes an SDK bump a one-file change.
 
 `tokio` is already a `src-tauri` dependency (`features = ["sync"]`); `ido-mcp` needs
 `features = ["rt-multi-thread", "macros", "io-std"]`.
@@ -329,38 +330,270 @@ Embedding every line produces context-free fragments. The useful unit for markdo
 Store per chunk: `{chunk_id, kind, entry_id, heading_path, byte_range, text}` so a hit can point
 at an exact place in the source file, and `get_entry` can be called with the right `offset`.
 
-### 6.3 Embedding model
+### 6.3 Embedding model — Candle, not ONNX Runtime
 
-**[`fastembed`](https://docs.rs/fastembed) 5.17.x** — synchronous, no tokio requirement, ONNX
-Runtime under the hood, download-once/run-offline, and it exposes `UserDefinedEmbeddingModel` for
-fully-offline bring-your-own-ONNX.
+**[`candle`](https://github.com/huggingface/candle) 0.11** (`candle-core` + `candle-nn` +
+`candle-transformers`), HuggingFace's minimalist Rust ML framework. The decisive property is
+narrower than "pure Rust" — state it precisely, because the imprecise version is false:
 
-| Model | Dim | Disk | Notes |
-|---|---|---|---|
-| **`BGESmallENV15`** (fastembed default) | 384 | ~130 MB | **Recommended start.** Strong retrieval quality per byte, English-first, tiny vectors |
-| `AllMiniLML6V2` | 384 | ~90 MB | Smallest, slightly weaker. Fallback for constrained machines |
-| **`EmbeddingGemma300M`** (`…Q4` 4-bit build available) | 768 (Matryoshka → 512/256/128) | <200 MB quantized | **Recommended upgrade.** Multilingual, on-device-designed, truncatable dims. Also the obvious bridge to the Gemma ambition in `CLAUDE.md` |
+> **Candle ships no native runtime artifact.** Everything it needs is compiled *into* the binary
+> at build time. There is no `.dylib`/`.dll`/`.so` to bundle beside the executable, to locate at
+> load time, or to sign and notarize separately.
 
-Ship `BGESmallENV15` as the default and put the model choice in `.ido/well.toml` (or app settings)
-— the index manifest records which model built it, so switching triggers a rebuild rather than
+That, not "no C code", is what kills the largest packaging risk in this plan. `fastembed` is a
+nicer *API*, but it sits on `ort` 2.0.0-rc.x, whose ONNX Runtime is a **shared library that must
+travel with the app** and be found at load time on three platforms inside a Tauri bundle. Candle
+trades a lower level of abstraction for a bundle that is one file.
+
+**Candle does still compile some C**, and the dependency audit in §11 documents exactly what and
+why the `default-features = false` trick does *not* avoid it. Short version: `candle-core` itself
+depends on `tokenizers` with `features = ["onig"]`, so Oniguruma (C) is compiled in whatever we
+declare. It needs a C compiler on the *build* machine — which every Tauri build already requires —
+and produces no artifact to ship.
+
+**Dependencies:**
+
+```toml
+candle-core         = "0.11"
+candle-nn           = "0.11"
+candle-transformers = "0.11"
+tokenizers = { version = "0.22", default-features = false }  # see §11 — does not do what you think
+ureq       = { version = "3",    features = ["rustls"] }     # model download only
+safetensors = "0.8"   # transitively via candle; listed for clarity
+```
+
+Optional acceleration, all opt-in cargo features, none required:
+
+| Feature | Platform | Effect |
+|---|---|---|
+| `metal` | macOS | GPU via Metal. System framework — **nothing to bundle**. Big win on index builds |
+| `accelerate` | macOS | BLAS via the Accelerate system framework. Also nothing to bundle |
+| `mkl` | x86 Linux/Windows | Intel MKL. **Pulls a large static blob** — probably not worth it |
+| `cuda` | NVIDIA | Irrelevant here; a note-taking app should not require CUDA |
+
+Default to plain CPU everywhere. Treat `metal` and `accelerate` as measured optimizations for the
+macOS build, not requirements (§10).
+
+#### Model candidates
+
+Candle needs the model as **safetensors + `config.json` + `tokenizer.json`**, and it needs an
+architecture that `candle-transformers` implements. Confirmed present in 0.11: `bert`,
+`distilbert`, `jina_bert`, `nomic_bert`, `modernbert`, `xlm_roberta`, `stella_en_v5`.
+
+| Model | Arch | Dim | Disk (f32) | Pooling | Notes |
+|---|---|---|---|---|---|
+| **`BAAI/bge-small-en-v1.5`** | `bert` | 384 | ~133 MB | **CLS** | **Recommended start.** Best retrieval quality per byte, English-first, tiny vectors |
+| `sentence-transformers/all-MiniLM-L6-v2` | `bert` | 384 | ~90 MB | mean | Smallest, slightly weaker. Fallback for constrained machines; it's also candle's own example model, so it's the best-trodden path for the spike |
+| `intfloat/multilingual-e5-small` | `xlm_roberta` | 384 | ~470 MB | mean | The multilingual option. Disk cost is vocabulary, not depth |
+| `nomic-ai/modernbert-embed-base` | `modernbert` | 768 | ~600 MB | mean | Long context (8k), strongest of these — but 4× the download and 2× the vector width |
+
+Ship `bge-small-en-v1.5` as the default; put the choice in `.ido/well.toml` (or app settings). The
+index manifest records **which model built it**, so switching triggers a rebuild rather than
 silently mixing vector spaces.
 
-**Distribution is the real problem, not quality.** Three unknowns to resolve in a spike before
-committing (§10):
+#### EmbeddingGemma — deferred, not rejected
 
-1. **ONNX Runtime shared library.** fastembed depends on `ort` 2.0.0-rc.13. `ort-download-binaries`
-   fetches it at build time; for a shipped Tauri app the runtime `.dylib`/`.dll`/`.so` must be
-   bundled and found at load time. This is the single biggest packaging risk in the whole plan.
-2. **Model download.** ~130 MB on first use, from HuggingFace. Cache in `<app_data_dir>/models/`
-   (via `TextInitOptions::with_cache_dir`), **not** in `.ido/` — models are per-machine and shared
-   across wells; `.ido/` is per-well rebuildable cache.
-3. **Binary size and cold start.** Measure `ido-mcp` startup with the model loaded; the client
-   spawns it per session.
+It's the model we'd *want*: 768-dim with Matryoshka truncation to 512/256/128, 100+ languages, an
+8k context, explicitly designed for on-device use, and the obvious bridge to the Gemma ambition in
+[`CLAUDE.md`](../CLAUDE.md). Four things stand between us and it, and they're worth writing down
+precisely rather than hand-waving:
 
-**Fallback if (1) proves ugly:** make the semantic layer a **compile-time feature** (`--features
-semantic`) and ship keyword-only by default, with semantic as an opt-in the user enables in
-settings (which then downloads runtime + model). `well_info` reports which mode is live. This
-keeps the MCP server shippable while the packaging is sorted.
+| Blocker | Detail | Severity |
+|---|---|---|
+| **Not in candle-transformers** | 0.11 has Gemma 3 as a *causal* architecture. EmbeddingGemma is the same backbone with **bidirectional** attention, mean pooling, and two dense projection heads — an encoder, not a decoder. Needs a port. **But HF's own [`text-embeddings-inference`](https://github.com/huggingface/text-embeddings-inference) already has a candle Gemma3 encoder** (Apache-2.0, handles the sliding/full attention pattern), so it's adaptation, not invention | Medium |
+| **1.21 GB, fp32 only** | `model.safetensors` is **1,211,486,072 bytes**, stored F32 — and TEI's candle backend rejects `--dtype float16` outright ("Gemma3 is only supported in fp32 precision"). Add a **33 MB `tokenizer.json`** for the 262k-token vocabulary. That's ~9× bge-small on disk and ~1.3 GB resident in a process the MCP client spawns per session | **High** |
+| **Gated repo** | `google/embeddinggemma-300m` is `gated: "manual"` — it requires a HuggingFace account and manual acceptance of Google's license. A plain `GET .../resolve/main/model.safetensors` **401s**. Our whole download design (§6.3) assumes an anonymous fetch. The outs are all bad: make the user paste an HF token, mirror the weights ourselves (needs a license read), or trust a community re-upload | **High** |
+| **Weights are split across four files** | The pooling and both dense heads live outside the main checkpoint in sentence-transformers module layout — `1_Pooling/config.json`, `2_Dense/` and `3_Dense/` (9.4 MB each). Candle would load three safetensors files and apply the projections by hand | Low |
+
+**The quantized escape hatch doesn't currently work either.** Google publishes QAT checkpoints and
+the community publishes GGUF conversions at ~200 MB, and llama.cpp has learned to carry the
+sentence-transformers dense modules inside the GGUF. But candle's quantized support is built around
+its *generative* model list, so a Gemma3 **encoder** + two dense heads from GGUF is a second,
+different port — and there are field reports of at least one QAT GGUF producing embeddings that
+don't match the reference implementation at all. Two ports and a correctness cloud is not a
+starting position.
+
+**Verdict: P4 upgrade with named triggers, not the P2 default.** Revisit when *either* of these
+becomes true:
+
+1. `candle-transformers` ships a Gemma3 encoder upstream (drops blocker 1 and probably 2), **or**
+2. we decide multilingual retrieval is a requirement rather than a nice-to-have — at which point
+   compare against `multilingual-e5-small` first, since it is 470 MB, ungated, and runs on the
+   `xlm_roberta` architecture candle **already** supports.
+
+The `ModelSpec` registry above is what makes this cheap to revisit: EmbeddingGemma's asymmetric
+prompts (`"task: search result | query: {q}"` for queries, `"title: none | text: {doc}"` for
+documents) are just two more fields, and the manifest's model id already forces a clean reindex on
+a switch. Design for the swap; don't pay for it now.
+
+#### Alternatives considered — is anything more Rust-native?
+
+Candle is chosen, but it is not the only pure-ish-Rust option and it is **not the most Rust-native
+one** — worth recording honestly, so the trade is a decision rather than an oversight. All figures
+below are **measured** the same way as §11 (resolve the manifest, diff crate names against ido's
+lockfile):
+
+| Stack | Net-new crates | Third-party C in the tree | Model format | Verdict |
+|---|---|---|---|---|
+| **candle** 0.11 | 82 | **oniguruma** (forced) + **ring** | safetensors, arch must exist in `candle-transformers` | **Chosen** |
+| **[`tract`](https://github.com/sonos/tract)** 0.23 | 81 | **none** — `cc` builds tract's *own* asm kernels | ONNX export | Documented escape hatch |
+| **[`model2vec-rs`](https://github.com/MinishLab/model2vec-rs)** 0.2 | 74 | oniguruma + ring | safetensors static table | Fallback / de-risking play |
+| **[`burn`](https://github.com/tracel-ai/burn)** 0.19 | **372** | ring | ONNX → Rust codegen | **Rejected** |
+| ~~`ort`/fastembed~~ | — | ONNX Runtime **shared library** | ONNX | Rejected — §6.3 opening |
+
+**tract is the genuinely more Rust-native answer.** Sonos's inference engine, in production on
+millions of devices, and the only candidate here that pulls **no third-party C library at all**:
+no oniguruma, no ring. It does use `cc`, but for `tract-linalg` compiling *its own* hand-written
+SIMD/assembly kernels — which is why it's fast, and is self-contained rather than a vendored
+third-party dependency. It also doesn't force `tokenizers/onig`, so unlike under candle our
+`default-features = false` actually works.
+
+Its cost is a **format hop and a coverage question**: models must be ONNX (fine —
+`Xenova/bge-small-en-v1.5` publishes one, and even potion ships `onnx/model.onnx`), and tract
+passes ~85% of the ONNX backend test suite, so any given graph loading is not guaranteed.
+
+**Decision: candle, and this is settled rather than pending a spike.** The reasons are not about
+C-purity, which tract wins:
+
+- **Native safetensors, no export step.** Every model swap under tract needs someone to produce and
+  trust an ONNX conversion; under candle it's three files from the model's own repo.
+- **The architecture zoo is the product.** `bert`, `xlm_roberta`, `modernbert`, `nomic_bert`,
+  `jina_bert`, `stella_en_v5` are all already there, which is what makes the `ModelSpec` registry
+  a config change rather than a project.
+- **It tracks HF's models because it is HF's framework**, and the EmbeddingGemma path runs through
+  it.
+- **A missing model is a tractable problem** rather than someone else's ONNX-export problem —
+  relevant only if we ever hit one, which `bge-small-en-v1.5` means we don't.
+
+Oniguruma and ring are compiled statically and ship nothing (§11.2), which makes the purity gap
+real but small. Tract stays documented here as the **escape hatch**, not a pending decision: if
+candle's C surface, compile time or op coverage ever becomes a genuine problem, the `Embedder`
+trait below means swapping it is one file and a re-index, and this section is the note-to-self
+explaining why it's viable.
+
+**model2vec is a different trade entirely — worth understanding, because it's tempting.** It
+replaces the transformer forward pass with a *static lookup table*: distilled per-token vectors,
+pooled. No attention, no context. That makes indexing effectively free. The quality cost is real
+and measurable (MTEB **retrieval** sub-score, which is the only column that matters here):
+
+| Model | MTEB retrieval | Note |
+|---|---|---|
+| `bge-small-en-v1.5` (candle default) | ~highest of these | Our baseline |
+| `all-MiniLM-L6-v2` | **42.92** | The *weaker* candle candidate |
+| `potion-retrieval-32M` | **35.06** | Best static retrieval model — **~82% of MiniLM** |
+| `potion-base-8M` | 31.11 | |
+
+`potion-retrieval-32M` is MIT, **ungated**, 129 MB at f32 (i8 weights are supported, ~4× smaller),
+and a 1.5 MB tokenizer. Note the f32 size is *no smaller than bge-small* — the win is compute and
+RAM, not disk.
+
+So: **not the default** — semantic search is the headline feature and a 20% retrieval haircut is
+the wrong thing to economize on. But it is an excellent **P2 de-risking vehicle**: build the whole
+pipeline (chunker, `vectors.bin`, RRF, eval harness, `well_info` reporting) against a trivial
+embedder that indexes in seconds, prove the plumbing, then swap the embedder. Which leads to the
+one design decision this section actually forces:
+
+> **Put the embedder behind a trait.** `trait Embedder { fn dim(&self) -> usize; fn embed(&self,
+> texts: &[String], role: Role) -> Result<Vec<Vec<f32>>>; }` with `Role::{Query, Document}` so the
+> `ModelSpec` prefixes and pooling live behind it. Candle, tract and model2vec then differ in one
+> file, the eval harness can score all three on the same well, and the manifest's model id already
+> forces a clean reindex on a switch.
+
+Burn is out: 372 net-new crates for a feature this size is disqualifying, whatever its merits as a
+training framework.
+
+#### The model registry — what fastembed was doing for us
+
+This is the part that is easy to get wrong and produces *plausible but quietly bad* results, which
+is the worst failure mode there is. fastembed hid it; with candle we own it. Encode it as data,
+once:
+
+```rust
+pub struct ModelSpec {
+    pub repo:         &'static str,  // "BAAI/bge-small-en-v1.5"
+    pub arch:         Arch,          // Bert | XlmRoberta | ModernBert | NomicBert
+    pub dim:          usize,         // 384
+    pub max_tokens:   usize,         // 512
+    pub pooling:      Pooling,       // Cls | Mean   ← per-model, NOT a global choice
+    pub query_prefix: &'static str,  // BGE: "Represent this sentence for searching relevant passages: "
+    pub doc_prefix:   &'static str,  // BGE: ""     E5: "passage: " (and query: "query: ")
+    pub normalize:    bool,          // true for all four above
+}
+```
+
+Two traps live in that struct:
+
+1. **Pooling is per-model.** BGE pools the **CLS token**; MiniLM, E5 and Nomic take the
+   **attention-masked mean**. Use mean pooling on BGE and you get a working, normalized,
+   entirely-mediocre index — no error, just worse recall you'd never trace back.
+2. **Asymmetric prefixes are load-bearing.** BGE-v1.5 expects the query (never the document) to
+   carry `"Represent this sentence for searching relevant passages: "`. E5 expects `query: ` and
+   `passage: ` on their respective sides. Omitting them costs real recall; applying the query
+   prefix to documents costs more. The index build path and the query path must read this from the
+   **same** `ModelSpec`.
+
+Both belong in the eval harness (§6.7) as explicit regression cases.
+
+#### The embedding path, concretely
+
+Mirrors [candle's own BERT example](https://github.com/huggingface/candle/tree/main/candle-examples/examples/bert):
+
+```rust
+// load once, keep resident for the process lifetime
+let cfg: Config       = serde_json::from_str(&fs::read_to_string(config_path)?)?;
+let tokenizer         = Tokenizer::from_file(tok_path)?;      // + PaddingParams::BatchLongest
+let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[weights], DTYPE, &device)? };
+let model             = BertModel::load(vb, &cfg)?;
+
+// per batch
+let enc          = tokenizer.encode_batch(texts, true)?;      // texts already prefixed per ModelSpec
+let token_ids    = Tensor::new(ids,   &device)?;              // [batch, seq]
+let attn_mask    = Tensor::new(mask,  &device)?;
+let token_types  = token_ids.zeros_like()?;
+let hidden       = model.forward(&token_ids, &token_types, Some(&attn_mask))?;  // [batch, seq, dim]
+let pooled       = match spec.pooling {
+    Pooling::Cls  => hidden.i((.., 0))?,                      // first token
+    Pooling::Mean => masked_mean(&hidden, &attn_mask)?,       // Σ(h·m) / Σm — never a naive .mean(1)
+};
+let embeddings   = normalize_l2(&pooled)?;
+```
+
+`DTYPE` is `F32`; candle's CPU path has no useful f16 story, and at 384 dims the memory is
+irrelevant. `masked_mean` must divide by the **mask sum**, not the sequence length — padding
+tokens otherwise drag every short chunk toward the same point in the space.
+
+Batch 16–64 chunks per forward pass and reuse the loaded model across the whole index build; the
+per-call overhead dominates otherwise.
+
+#### Model download and cache
+
+Candle's examples use `hf-hub`, but that crate went through a **0.5 → 1.0 API redesign** (candle
+0.11 pins 0.5.0; 1.0.0 landed July 2026 with a different surface). We need exactly three files
+from one public repo, so skip the dependency and fetch them directly:
+
+```
+https://huggingface.co/{repo}/resolve/main/{config.json,tokenizer.json,model.safetensors}
+```
+
+with `ureq` + rustls, into **`<app_data_dir>/models/{repo}/`** — *not* `.ido/`. Models are
+per-machine and shared across wells; `.ido/` is per-well rebuildable cache. Verify a sha256 per
+file against a pinned manifest, download to a temp path and rename into place, and treat a partial
+download as absent. This is the **only** network event in the system's entire life (§9), it is
+user-triggered, and it must be reported as such in the UI.
+
+#### Honest costs
+
+| Concern | Assessment |
+|---|---|
+| **Inference speed** | Candle CPU is generally **slower than ORT** for BERT — call it 1.5–3× until measured. It does not matter for queries (one short text, single-digit to low-tens ms) and it does matter for a cold index build. Measure it (§10) |
+| **Cold index build** | The real exposure. 5,000 chunks × ~450 tokens on CPU is plausibly 1–5 min. Mitigations, in order: batch properly, `rayon` across batches, then the `metal`/`accelerate` features, then a smaller model. Build once in the background, incrementally thereafter (§6.6) — a user should meet this exactly once |
+| **Compile time** | **Measured: 2m09s cold** for the 185-crate candle tree (§11.4). Gate the whole index module behind a **`semantic` cargo feature** on `ido-store` so `src-tauri`, `just verify`, and CI stay fast when it's off |
+| **Binary size** | **Measured: 5.1 MB linked / 4.1 MB stripped** (§11.4). Model weights live in the on-disk cache, never in the executable |
+| **Dependency count** | **+82 crates**, of which 79 are the candle stack and 3 are rmcp — see §11 |
+| **Model correctness** | Candle reimplements architectures; a config key it doesn't parse can shift behavior. Pin the model revision and assert a **known-vector test**: embed one fixed string, compare to a committed reference vector within 1e-4 |
+
+The `semantic` feature also preserves the old fallback: ship keyword-only, let semantic be an
+opt-in build. `well_info` reports which mode is live either way.
 
 ### 6.4 Vector storage — brute force, and why that's the right answer
 
@@ -413,9 +646,13 @@ RRF needs no score normalization (it uses ranks, not scores), which is exactly w
 the lexical scorer produces `in_title * 1000 + occurrences`, which is not comparable to cosine
 similarity in any principled way.
 
-**Reranking** — fastembed's `TextRerank` cross-encoder over the fused top-20 — is a real quality
-lever but adds a second model, more latency, and more packaging. Phase 4, measured against the
-eval set, dropped if it doesn't pay.
+**Reranking** — a cross-encoder over the fused top-20 — is a real quality lever but costs more
+under candle than it would have under fastembed: `candle-transformers`' bert module exposes
+`BertModel` and `BertForMaskedLM`, but no sequence-classification head, so a reranker means
+loading the base encoder plus a hand-written pooled linear head and matching it to the checkpoint's
+weight names. Plus a second model, second download, and per-query latency on 20 pairs. Phase 4,
+measured against the eval set, dropped if it doesn't pay — and it probably doesn't at this scale.
+
 
 ### 6.6 Freshness and incremental indexing
 
@@ -466,16 +703,19 @@ running; tool results stay under budget on a large well; a `just mcp` recipe run
 
 ### P2 — Semantic index
 
-Chunker, fastembed integration, `vectors.bin` + manifest, brute-force cosine, RRF fusion, the
-eval harness. `mode` parameter on `search`; `well_info` reports index state. Graceful degradation
-to keyword when the model/runtime is absent.
-**Done when:** hybrid beats keyword on the eval set, a cold index builds in under a minute on a
-2,000-note well, and a warm query is imperceptible.
+Chunker, the candle embedder (`ModelSpec` registry + pooling + prefixes), model download,
+`vectors.bin` + manifest, brute-force cosine, RRF fusion, the eval harness. All behind the
+`semantic` cargo feature. `mode` parameter on `search`; `well_info` reports index state. Graceful
+degradation to keyword when the model is absent or the feature is off.
+**Done when:** hybrid beats keyword on the eval set, the known-vector test pins the embedder, a
+cold index builds in a few minutes on a 2,000-note well, and a warm query is imperceptible.
 
 ### P3 — Packaging + in-app surface
 
 Bundle `ido-mcp` as a **Tauri sidecar** (`bundle.externalBin`, per-target-triple naming:
-`binaries/ido-mcp-aarch64-apple-darwin`, `…-x86_64-pc-windows-msvc.exe`, …). Settings pane: enable
+`binaries/ido-mcp-aarch64-apple-darwin`, `…-x86_64-pc-windows-msvc.exe`, …) — with candle this is
+**one self-contained executable per triple** and no accompanying native libraries, which is the
+whole reason this phase is small. Settings pane: enable
 the server, copy the `.mcp.json` snippet, show/trigger the model download, show index status. Reuse
 the same index for **in-app semantic search** in the `Ctrl+K` palette — same code, second consumer,
 and the honest test of whether retrieval is actually good.
@@ -484,7 +724,17 @@ and the honest test of whether retrieval is actually good.
 
 `create_entry`, `append_to_entry`, `create_task`, `update_task_field`. Off unless `--allow-write`.
 Every write is undoable by construction (the store already models soft-delete + restore). Then the
-optional extras: reranking, prompts, int8 quantization, `list_wells` + a `well` parameter.
+optional extras: reranking, prompts, int8 quantization, `list_wells` + a `well` parameter, and the
+**EmbeddingGemma revisit** if either trigger in §6.3 has fired.
+
+### Beyond the roadmap — low priority, after the above
+
+Three of §6.3's blockers are gaps in candle itself rather than in ido: no
+`BertForSequenceClassification` (the reranker head), no Gemma3 *encoder*, and no fp16/bf16 for it.
+Each is upstreamable, and candle's bar for a model PR — port from the Python reference, show the
+logits match, add an example — overlaps the known-vector test we build anyway. Noted only so the
+option is on record. **It is not a phase, not a prerequisite, and not scheduled**: P2 ships on
+`bge-small-en-v1.5` regardless, and nothing above waits on it.
 
 ---
 
@@ -524,19 +774,135 @@ seriously:
 
 ## 10. Open questions — resolve with spikes, not opinions
 
-1. **ORT packaging.** Does `ort` 2.0.0-rc.13 bundle cleanly into a Tauri app on macOS + Windows +
-   Linux, or does it need a per-platform dylib dance? *Spike: build a 40-line binary that embeds one
-   string with `BGESmallENV15`, bundle it as a sidecar, run it on all three.* **This gates P2/P3.**
-2. **rmcp 3.0 churn.** How much does `3.0.0-beta.2` → `3.0.0` move? *Spike: build the seven tools
-   against the beta, keep the tool bodies in `ido-store` so the SDK layer stays thin and swappable.*
+1. **Does candle reproduce the reference embeddings?** Everything downstream is worthless if the
+   vectors are subtly wrong. *Spike: a 60-line binary that loads `bge-small-en-v1.5`, embeds a
+   fixed string with CLS pooling + L2 norm, and diffs against the vector `sentence-transformers`
+   produces in Python. Within 1e-4 ⇒ commit it as the known-vector test.* **This gates P2** — and
+   it is a much cheaper gate than the ORT-packaging spike it replaces.
+   *(The tract variant of this spike is **not** scheduled — candle is decided, §6.3. Keep the
+   known-vector test backend-agnostic anyway, so the escape hatch stays cheap to test.)*
+2. ~~**rmcp 3.0 churn.**~~ **Resolved:** rmcp 3.0 shipped final and 3.1.0 is current; build against
+   3.1. Keep the tool bodies in `ido-store` so the SDK layer stays thin and swappable.
 3. **Chunk size.** 450 tokens with 15% overlap is a starting guess. The eval set decides.
 4. **Where in-app semantic search lands** — does the palette become hybrid, or does semantic get a
    separate mode? Product question; P3.
-5. **Model default** — is EmbeddingGemma-300M-Q4 good enough to skip BGE entirely and go
-   multilingual from day one? Measure both on the eval set.
-6. **Session/registry access from the MCP process** — `wells.json` lives in Tauri's
+5. **Index-build throughput, and whether Metal is worth it.** *Spike: time a 5,000-chunk build on
+   the CPU build, then with `--features metal` and with `accelerate`, on the same Mac.* If CPU is
+   already a couple of minutes, ship CPU-only and skip the per-platform feature matrix entirely.
+   Candle's Metal backend has thinner op coverage than its CPU one — a fallback path must exist,
+   and any Metal build has to pass the known-vector test of (1) too.
+6. **Multilingual, and how much it costs.** Is `multilingual-e5-small` (~470 MB, mostly vocabulary)
+   worth 3.5× the download over `bge-small-en-v1.5` for this user's actual wells? Measure both on
+   the eval set. EmbeddingGemma would be the better answer to this question — recheck whether
+   candle-transformers has shipped the encoder before settling.
+7. **Session/registry access from the MCP process** — `wells.json` lives in Tauri's
    `app_data_dir`, which the store crate can't ask Tauri for. Resolve the path with `directories`
    or replicate the platform rules; only needed for the `--well` fallback.
+
+---
+
+## 11. Dependency audit — what this actually costs
+
+Measured, not estimated: resolved with `cargo generate-lockfile` against real manifests and
+diffed by crate name against ido's current `Cargo.lock` (**501 unique crates** today). Re-run the
+numbers before committing; they will drift.
+
+### 11.1 The headline
+
+| | Net-new crates |
+|---|---|
+| `rmcp` 3.1 (`server`, `macros`, `transport-io`, `schemars`) | **3** |
+| candle stack (`candle-core` + `candle-nn` + `candle-transformers` + `tokenizers` + `ureq`) | **79** |
+| **Total** | **82** → ~583 crates in the workspace |
+
+**rmcp is nearly free, and that is the most important line in this table.** Three crates —
+`rmcp`, `rmcp-macros`, `tokio-macros` — because Tauri already drags in tokio, serde, serde_json,
+schemars, futures, hyper, tracing and anyhow. The entire MCP protocol layer is a rounding error on
+a tree this size.
+
+**All the weight is semantic search.** Which is exactly why the `semantic` cargo feature from §6.3
+is load-bearing rather than cosmetic: with it off, `ido-mcp` costs 3 crates; with it on, 82.
+Keep it off in `src-tauri`'s default build so app builds and `just verify` are untouched.
+
+Where the 79 come from (subtrees overlap — `rayon` and `num_cpus` are shared):
+
+| Subtree | ≈ crates | What it is |
+|---|---|---|
+| `tokenizers` | 34 | HF tokenizer: regex engines, unicode normalization, `derive_builder`, `monostate` |
+| `gemm` | 31 | The SIMD linear-algebra kernel — `pulp`, `dyn-stack`, `raw-cpuid`, the `gemm-f32/f64/c32/c64/f16` family. This is candle's actual compute |
+| `ureq` + rustls | 11 | Model download only — `rustls`, `ring`, `webpki-roots`, `untrusted` |
+| candle itself | 3 | `candle-core`, `candle-nn`, `candle-transformers` |
+| model IO | ~4 | `safetensors`, `memmap2`, `zip`, `zerocopy` |
+
+### 11.2 Native code — correcting the "pure Rust" claim
+
+An earlier draft of §6.3 said a default candle build is pure Rust and that
+`tokenizers = { default-features = false }` keeps it that way. **Both halves are wrong**, and the
+audit is how that surfaced:
+
+```toml
+# candle-core 0.11.0's own manifest — non-optional, non-dev:
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.tokenizers]
+version = "0.22.0"
+features = ["onig"]          # ← Oniguruma, a C library
+default-features = false
+```
+
+Cargo **unions** features across the graph, so candle-core enabling `onig` means we get
+`onig_sys` and its bundled C regex engine no matter what our own manifest says. Declaring
+`default-features = false` on our side is still correct hygiene — it keeps `progressbar` and
+`esaxx_fast` off — but it cannot remove `onig`.
+
+| Crate | Native content | Forced by | Ships an artifact? |
+|---|---|---|---|
+| `onig_sys` | Oniguruma, **C** | `candle-core` → `tokenizers/onig`. Unavoidable | No — static |
+| `ring` | **C + assembly** | `rustls` ← `ureq`. Avoidable, see below | No — static |
+| `esaxx-rs` | C++ **only** with its `cpp` feature | Present but `esaxx_fast` is off ⇒ **pure Rust path** | n/a |
+
+**This does not weaken the case against ORT** — it sharpens what the case actually is. Every one
+of these compiles *into* the executable. ORT's problem was categorically different: a shared
+library that must be shipped beside the binary, found at load time, and signed/notarized on macOS.
+A C compiler on the build machine is not a new requirement; every Tauri build already needs Xcode
+CLT / MSVC / gcc.
+
+If dropping `ring` is worth 11 crates, the lever is to move model download into the app (which
+already has an HTTP stack) and have `ido-mcp` require pre-fetched weights. Only worth it if the
+crate count starts mattering.
+
+**The alternatives are not cheaper — they're differently shaped.** Same measurement method:
+
+| Stack | Net-new crates | `cc` | oniguruma | `ring` |
+|---|---|---|---|---|
+| candle | 82 | yes | **yes** (forced by `candle-core`) | **yes** |
+| tract | 81 | yes — *its own asm kernels* | **no** | **no** |
+| model2vec-rs | 74 | yes | **yes** | **yes** |
+| burn | 372 | yes | — | yes |
+
+Crate *count* barely separates the top three; **what separates them is whose C it is.** Only tract
+avoids third-party C entirely. See §6.3 for the quality and format trade-offs that go with it.
+
+### 11.3 Version duplication
+
+Mostly a non-event — ido's tree already carries several crates at two majors (`base64`,
+`thiserror`, `syn`, `getrandom`). One genuinely new split:
+
+- **`schemars`** — ido has 0.8.22 and 0.9.0 via Tauri; rmcp wants **1.2.2**. A third copy compiles.
+  Compile-time cost only; the two never meet at a type boundary.
+
+### 11.4 Measured build cost
+
+Release profile, Apple Silicon, candle tree only:
+
+| Measurement | Value |
+|---|---|
+| Cold build, 185 crates | **2 min 09 s** |
+| Incremental rebuild of the leaf crate | **3.6 s** |
+| Linked binary exercising `BertModel::load` + `Tokenizer::from_file` + `ureq` | **5.14 MB** (4.06 MB stripped) |
+
+The binary number is the one worth internalizing: **~5 MB, not hundreds.** Candle's model zoo is
+dead-code-eliminated down to the architectures actually referenced, and model weights live on disk
+in the cache, never in the executable. The 2-minute cold build is a CI concern, not a developer
+one — it is cached after the first run, and the `semantic` feature keeps it off the default path.
 
 ---
 
@@ -583,8 +949,10 @@ cargo run -p ido-mcp -- --eval  docs/eval.jsonl   # retrieval eval: recall@5 / M
 - [`vendor/latent-design/docs/knowledge-architecture.md`](../vendor/latent-design/docs/knowledge-architecture.md) — the ecosystem plan this implements
 - MCP spec 2026-07-28 — [changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog), [blog](https://blog.modelcontextprotocol.io/posts/2026-07-28/)
 - [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) — official Rust MCP SDK
-- [fastembed-rs](https://github.com/anush008/fastembed-rs) · [docs.rs](https://docs.rs/fastembed)
-- [EmbeddingGemma model card](https://ai.google.dev/gemma/docs/embeddinggemma/model_card) · [BGE-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5)
+- [candle](https://github.com/huggingface/candle) — [BERT example](https://github.com/huggingface/candle/tree/main/candle-examples/examples/bert) (the reference implementation for §6.3) · [docs.rs](https://docs.rs/candle-transformers)
+- Alternatives weighed in §6.3: [tract](https://github.com/sonos/tract) · [model2vec-rs](https://github.com/MinishLab/model2vec-rs) + [MTEB results](https://github.com/MinishLab/model2vec/blob/main/results/README.md) · [burn](https://github.com/tracel-ai/burn)
+- [BGE-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) · [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) · [multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small)
+- [EmbeddingGemma model card](https://ai.google.dev/gemma/docs/embeddinggemma/model_card) — not yet an option under candle; recheck later
 - [Writing effective tools for AI agents](https://www.anthropic.com/engineering/writing-tools-for-agents) — Anthropic
 - [Reciprocal Rank Fusion explained](https://blog.serghei.pl/posts/reciprocal-rank-fusion-explained/) · [Hybrid search](https://weaviate.io/blog/hybrid-search-explained)
 - [Tauri sidecars](https://v2.tauri.app/develop/sidecar/)

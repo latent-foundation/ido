@@ -153,7 +153,7 @@ mod tests {
         assert_eq!(days_in_month(2025, 1), 28); // Feb, common
         assert_eq!(days_in_month(2026, 6), 31); // July
         assert_eq!(days_in_month(2026, 3), 30); // April
-                                                // 1 July 2026 is a Wednesday (0 = Sunday).
+        // 1 July 2026 is a Wednesday (0 = Sunday).
         assert_eq!(weekday(2026, 7, 1), 3);
         // Monday-first: Wednesday sits in column index 2 (Mo, Tu, We…).
         assert_eq!((weekday(2026, 7, 1) + 6) % 7, 2);
@@ -205,7 +205,7 @@ mod tests {
         // A month-grid can request a large jump; this should still resolve
         // correctly in one shot via the day-count round trip.
         assert_eq!(add_days(2026, 0, 1, 365), (2027, 0, 1)); // common year, 365 days
-                                                             // 2024 is a leap year (366 days) and its span includes 29 Feb.
+        // 2024 is a leap year (366 days) and its span includes 29 Feb.
         assert_eq!(add_days(2024, 0, 1, 365), (2024, 11, 31));
         assert_eq!(add_days(2024, 0, 1, 366), (2025, 0, 1));
     }

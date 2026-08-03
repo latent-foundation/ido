@@ -314,11 +314,7 @@ pub(super) fn priority_rank(p: &str) -> u8 {
 
 /// Due-date sort key — non-empty dates first (chronological), empties last.
 pub(super) fn due_key(d: &str) -> (u8, &str) {
-    if d.is_empty() {
-        (1, d)
-    } else {
-        (0, d)
-    }
+    if d.is_empty() { (1, d) } else { (0, d) }
 }
 
 /// Order `tasks` per the chosen sort (ties fall back to manual `order`).

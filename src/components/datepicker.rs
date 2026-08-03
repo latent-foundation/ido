@@ -12,7 +12,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
-use crate::dates::{days_in_month, parse_ymd, today, weekday, ymd, MONTHS, MONTHS_SHORT, WEEKDAYS};
+use crate::dates::{MONTHS, MONTHS_SHORT, WEEKDAYS, days_in_month, parse_ymd, today, weekday, ymd};
 use crate::icon::Icon;
 
 /// Split a `due` value into its `(date, time)` parts on the first space —

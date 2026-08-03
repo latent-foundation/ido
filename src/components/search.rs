@@ -52,10 +52,10 @@ fn highlight(text: &str, q: &str) -> AnyView {
         parts.push(view! { <mark class="ido-search-hl">{mid.to_string()}</mark> }.into_any());
         i = end;
     }
-    if let Some(rest) = text.get(i..) {
-        if !rest.is_empty() {
-            parts.push(rest.to_string().into_any());
-        }
+    if let Some(rest) = text.get(i..)
+        && !rest.is_empty()
+    {
+        parts.push(rest.to_string().into_any());
     }
     parts.into_iter().collect_view().into_any()
 }
@@ -69,10 +69,10 @@ pub fn SearchPalette() -> impl IntoView {
 
     // Focus the input when the palette opens (the ref turns `Some` on mount).
     Effect::new(move |_| {
-        if state.search_open.get() {
-            if let Some(el) = input_ref.get() {
-                let _ = el.focus();
-            }
+        if state.search_open.get()
+            && let Some(el) = input_ref.get()
+        {
+            let _ = el.focus();
         }
     });
 

@@ -23,10 +23,10 @@ fn images_in(dt: &DataTransfer) -> Option<Vec<File>> {
     let mut out = Vec::new();
     if let Some(files) = dt.files() {
         for i in 0..files.length() {
-            if let Some(file) = files.get(i) {
-                if file.type_().starts_with("image/") {
-                    out.push(file);
-                }
+            if let Some(file) = files.get(i)
+                && file.type_().starts_with("image/")
+            {
+                out.push(file);
             }
         }
     }

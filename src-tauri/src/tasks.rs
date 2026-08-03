@@ -687,7 +687,7 @@ pub fn restore_goal(well: String, id: String, content: String) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::{tempdir, TempDir};
+    use tempfile::{TempDir, tempdir};
 
     fn well() -> (TempDir, String) {
         let dir = tempdir().unwrap();

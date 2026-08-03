@@ -41,14 +41,14 @@ impl State {
     /// unresolved `[[wikilink]]` target), create it (at the wiki root) first,
     /// then refresh the tree.
     pub fn open_wiki(self, slug: String) {
-        if !self.wiki.get_untracked().iter().any(|s| s == &slug) {
-            if let Some(w) = self.well.get_untracked() {
-                let slug = slug.clone();
-                spawn_local(async move {
-                    ipc::ensure_page(w.path.clone(), slug).await;
-                    self.set_wiki(ipc::list_wiki(w.path).await);
-                });
-            }
+        if !self.wiki.get_untracked().iter().any(|s| s == &slug)
+            && let Some(w) = self.well.get_untracked()
+        {
+            let slug = slug.clone();
+            spawn_local(async move {
+                ipc::ensure_page(w.path.clone(), slug).await;
+                self.set_wiki(ipc::list_wiki(w.path).await);
+            });
         }
         self.open_tab(TabTarget::WikiPage(slug));
     }
@@ -209,10 +209,10 @@ impl State {
         for p in self.panes {
             p.tabs.update(|tabs| {
                 for tab in tabs.iter_mut() {
-                    if let Some(slug) = tab.target.page_slug_mut() {
-                        if slug == old {
-                            *slug = new.to_string();
-                        }
+                    if let Some(slug) = tab.target.page_slug_mut()
+                        && slug == old
+                    {
+                        *slug = new.to_string();
                     }
                 }
             });

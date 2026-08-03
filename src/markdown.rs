@@ -15,7 +15,7 @@
 //! Add a concern by extending [`transform`] (or, like wikilinks, preprocessing);
 //! keep each its own small function so the pipeline stays readable.
 
-use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag};
+use pulldown_cmark::{CowStr, Event, Options, Parser, Tag, html};
 
 /// CommonMark plus the GitHub-flavoured extensions notes tend to use.
 fn options() -> Options {

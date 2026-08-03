@@ -3,7 +3,7 @@ name = "ido"
 version = "0.1.0"
 description = "ido is a minimalistic productivity tool for managing tasks and projects, with notes and wikis."
 authors = ["Maksymilian Neumann <neumann.maks@gmail.com>"]
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

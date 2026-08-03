@@ -5,7 +5,7 @@ use leptos::prelude::*;
 
 use crate::icon::Icon;
 use crate::model::TreeNode;
-use crate::state::{parent_of, MenuTarget, State};
+use crate::state::{MenuTarget, State, parent_of};
 
 /// Render a level of the tree, recursing into expanded folders.
 ///

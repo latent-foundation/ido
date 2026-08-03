@@ -151,12 +151,11 @@ fn rewrite_dir_links(dir: &Path, old: &str, new: &str, recurse: bool) {
         let path = entry.path();
         if recurse && path.is_dir() {
             rewrite_dir_links(&path, old, new, true);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
-            if let Ok(content) = fs::read_to_string(&path) {
-                if let Some(updated) = rewrite_links(&content, old, new) {
-                    let _ = fs::write(&path, updated);
-                }
-            }
+        } else if path.extension().and_then(|e| e.to_str()) == Some("md")
+            && let Ok(content) = fs::read_to_string(&path)
+            && let Some(updated) = rewrite_links(&content, old, new)
+        {
+            let _ = fs::write(&path, updated);
         }
     }
 }
@@ -483,7 +482,7 @@ pub fn backlinks(well: String, slug: String) -> Vec<LinkRef> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::{tempdir, TempDir};
+    use tempfile::{TempDir, tempdir};
 
     /// A scaffolded well with an empty `wiki/` dir.
     fn well() -> (TempDir, String) {
@@ -565,7 +564,7 @@ mod tests {
         let (_d, w) = well();
         let folder = create_wiki_folder(w.clone(), String::new()).unwrap();
         write_page(w.clone(), "alpha".into(), "a".into()).unwrap(); // at root
-                                                                    // Put a page inside the folder, then try to rename it onto the root slug.
+        // Put a page inside the folder, then try to rename it onto the root slug.
         let inner = create_page(w.clone(), folder.clone()).unwrap();
         assert!(rename_page(w.clone(), inner.clone(), "Alpha".into()).is_err());
         // A free name works and keeps the file in its folder.

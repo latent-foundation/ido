@@ -8,7 +8,7 @@ use leptos::prelude::*;
 
 use crate::icon::Icon;
 use crate::model::TreeNode;
-use crate::state::{parent_of, MenuTarget, State};
+use crate::state::{MenuTarget, State, parent_of};
 
 /// The slug of a page node — the last segment of its wiki-relative path.
 fn slug_of(path: &str) -> String {

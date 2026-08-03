@@ -268,10 +268,10 @@ fn QuickAdd(status: String) -> impl IntoView {
 
     // Focus the input when it appears (the ref turns `Some` on mount).
     Effect::new(move |_| {
-        if open.get() {
-            if let Some(el) = input_ref.get() {
-                let _ = el.focus();
-            }
+        if open.get()
+            && let Some(el) = input_ref.get()
+        {
+            let _ = el.focus();
         }
     });
 

@@ -442,14 +442,14 @@ impl State {
         let target = tab.target;
         // Tag this load; a later switch bumps the gen, so a slower earlier read
         // that resolves afterwards is dropped instead of clobbering the new tab.
-        let gen = p.load_gen.get_untracked().wrapping_add(1);
-        p.load_gen.set(gen);
+        let this_gen = p.load_gen.get_untracked().wrapping_add(1);
+        p.load_gen.set(this_gen);
         spawn_local(async move {
             let body = match &target {
                 TabTarget::Note(id) => ipc::read_note(w.path.clone(), id.clone()).await,
                 TabTarget::WikiPage(slug) => ipc::read_page(w.path.clone(), slug.clone()).await,
             };
-            if p.load_gen.get_untracked() != gen {
+            if p.load_gen.get_untracked() != this_gen {
                 return;
             }
             let segs = blocks::segment(&body);
@@ -470,7 +470,7 @@ impl State {
                 TabTarget::Note(id) => (ipc::note_meta(w.path, id).await, None),
                 TabTarget::WikiPage(slug) => (None, Some(ipc::backlinks(w.path, slug).await)),
             };
-            if p.load_gen.get_untracked() != gen {
+            if p.load_gen.get_untracked() != this_gen {
                 return;
             }
             p.meta.set(meta);

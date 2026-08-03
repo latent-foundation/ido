@@ -232,7 +232,7 @@ pub fn move_entry(well: String, id: String, is_dir: bool, dest: String) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::{tempdir, TempDir};
+    use tempfile::{TempDir, tempdir};
 
     /// A fresh empty well in a temp dir. Keep the `TempDir` alive for the test.
     fn well() -> (TempDir, String) {

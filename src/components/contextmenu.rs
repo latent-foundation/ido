@@ -7,7 +7,7 @@ use leptos::task::spawn_local;
 use wasm_bindgen::{JsCast, JsValue};
 
 use crate::icon::Icon;
-use crate::state::{parent_of, MenuTarget, Mode, State};
+use crate::state::{MenuTarget, Mode, State, parent_of};
 
 /// `(document, document.<name>)` — `execCommand` isn't bound in this web-sys, so
 /// it's reached reflectively. `pub(crate)`: `mainpane::attachments` reuses this
@@ -36,15 +36,15 @@ fn paste_clipboard() {
     };
     let clip = win.navigator().clipboard();
     spawn_local(async move {
-        if let Ok(v) = wasm_bindgen_futures::JsFuture::from(clip.read_text()).await {
-            if let (Some(text), Some((doc, f))) = (v.as_string(), document_fn("execCommand")) {
-                let _ = f.call3(
-                    &doc,
-                    &JsValue::from_str("insertText"),
-                    &JsValue::FALSE,
-                    &JsValue::from_str(&text),
-                );
-            }
+        if let Ok(v) = wasm_bindgen_futures::JsFuture::from(clip.read_text()).await
+            && let (Some(text), Some((doc, f))) = (v.as_string(), document_fn("execCommand"))
+        {
+            let _ = f.call3(
+                &doc,
+                &JsValue::from_str("insertText"),
+                &JsValue::FALSE,
+                &JsValue::from_str(&text),
+            );
         }
     });
 }

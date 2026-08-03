@@ -43,12 +43,12 @@ impl State {
             self.search_results.set(command_hits(&query));
             return;
         };
-        let gen = self.search_gen.get_untracked().wrapping_add(1);
-        self.search_gen.set(gen);
+        let this_gen = self.search_gen.get_untracked().wrapping_add(1);
+        self.search_gen.set(this_gen);
         set_timeout(
             move || {
                 // Superseded by a newer keystroke — this scan is stale, skip it.
-                if self.search_gen.get_untracked() != gen {
+                if self.search_gen.get_untracked() != this_gen {
                     return;
                 }
                 let path = w.path.clone();

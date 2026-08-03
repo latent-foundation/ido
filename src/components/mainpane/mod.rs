@@ -178,11 +178,11 @@ pub fn MainPane(pane: Pane, idx: usize) -> impl IntoView {
                                             .target()
                                             .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
                                             .and_then(|el| el.closest("a").ok().flatten());
-                                        if let Some(a) = anchor {
-                                            if let Some(href) = a.get_attribute("href") {
-                                                ev.prevent_default();
-                                                state.open_link(href);
-                                            }
+                                        if let Some(a) = anchor
+                                            && let Some(href) = a.get_attribute("href")
+                                        {
+                                            ev.prevent_default();
+                                            state.open_link(href);
                                         }
                                     }
                                     inner_html=move || {

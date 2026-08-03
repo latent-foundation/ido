@@ -223,8 +223,11 @@ cargo check -p ido-ui                      # fast type-check of just the fronten
   through `State::open_link`: internal `[[wikilinks]]` (`ido:wiki/<slug>`) open/create the page in a
   tab; everything else goes to `open_external` (OS browser). A navigated webview white-screens the
   app. Raw HTML in notes is rendered as text, not executed (see `markdown.rs`).
-- Frontend crate is edition 2021; the ecosystem convention is edition 2024. Don't "fix" this
-  silently.
+- **Both crates are edition 2024**, matching the ecosystem convention in
+  `vendor/latent-design/docs/conventions.md`. Two consequences bite in practice: `gen` is a
+  **reserved keyword** (generation-counter locals are named `this_gen`, not `gen`), and **let-chains
+  are stable** — clippy's `collapsible_if` now *requires* `if let Some(x) = a && cond` instead of
+  nested `if`s, so `-D warnings` fails on the old form.
 
 ## Current state
 
@@ -427,7 +430,8 @@ considered and dropped), and the wiki grew **organisational folders** (slugs sta
 links stay folder-agnostic). The next big bet is the **MCP server + semantic search** over the
 store, specced end-to-end in [docs/mcp-server.md](docs/mcp-server.md): extract the store into a
 tauri-free `ido-store` crate, add an `rmcp` + stdio `ido-mcp` binary with seven read-only tools,
-then a local-embedding (fastembed) brute-force vector index fused with the existing lexical scan.
+then a local-embedding brute-force vector index (**candle** — pure Rust, no ONNX Runtime to
+bundle) fused with the existing lexical scan.
 Also open: the calendar's remaining phases (ICS export, read-only external feeds), small rough
 edges (N-way / persisted split, deeper goal-status surfacing), and the other bigger bets, none
 started: **local-LLM / Gemma** in-app assistance (on-device, private) and **web sync**

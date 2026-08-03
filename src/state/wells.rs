@@ -99,10 +99,10 @@ impl State {
     /// Pick an existing folder and open it as a well.
     pub fn open_well_picker(self) {
         spawn_local(async move {
-            if let Some(path) = ipc::pick_folder().await {
-                if let Some(w) = ipc::open_well(path).await {
-                    self.enter_well(w);
-                }
+            if let Some(path) = ipc::pick_folder().await
+                && let Some(w) = ipc::open_well(path).await
+            {
+                self.enter_well(w);
             }
         });
     }

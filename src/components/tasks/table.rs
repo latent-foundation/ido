@@ -85,11 +85,7 @@ fn status_rank(status: &str, columns: &[String]) -> (usize, String) {
 
 /// Compare two rank keys, reversing for descending.
 fn cmp_by<K: Ord>(a: K, b: K, asc: bool) -> Ordering {
-    if asc {
-        a.cmp(&b)
-    } else {
-        b.cmp(&a)
-    }
+    if asc { a.cmp(&b) } else { b.cmp(&a) }
 }
 
 /// Compare two text values keeping *absent* (empty) entries last in **both**
@@ -105,11 +101,7 @@ fn cmp_present(a: &str, b: &str, asc: bool) -> Ordering {
         (false, true) => Ordering::Less,
         (false, false) => {
             let (a, b) = (a.to_lowercase(), b.to_lowercase());
-            if asc {
-                a.cmp(&b)
-            } else {
-                b.cmp(&a)
-            }
+            if asc { a.cmp(&b) } else { b.cmp(&a) }
         }
     }
 }

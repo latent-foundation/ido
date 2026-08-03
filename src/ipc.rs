@@ -9,8 +9,8 @@
 //! Note: Tauri maps camelCase JS arg keys → snake_case Rust params, so any
 //! multi-word field (e.g. `is_dir`) is `#[serde(rename_all = "camelCase")]`.
 
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use wasm_bindgen::prelude::*;
 
 use crate::model::{

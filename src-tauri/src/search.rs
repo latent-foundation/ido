@@ -175,7 +175,7 @@ fn snippet(body: &str, q: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::{tempdir, TempDir};
+    use tempfile::{TempDir, tempdir};
 
     /// A well with the three section folders scaffolded.
     fn well() -> (TempDir, String) {
