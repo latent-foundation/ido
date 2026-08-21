@@ -1,8 +1,6 @@
 //! Editor panes: tabs, split view, tab drag, mode switching, the context menu,
 //! and the pane→[`Buffer`] wiring. `impl State` block — see [`super`].
 
-use leptos::prelude::*;
-
 use super::*;
 
 impl State {

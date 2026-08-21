@@ -7,7 +7,6 @@
 //! move unchanged — only a *rename* (which changes the slug) re-points tabs and
 //! rewrites links. Folder ops are path-based, mirroring the notes tree.
 
-use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use super::*;

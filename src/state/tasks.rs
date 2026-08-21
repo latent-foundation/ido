@@ -1,7 +1,6 @@
 //! Tasks section: the kanban board (cards, drag/drop, sort) and goals.
 //! `impl State` block — see [`super`].
 
-use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use super::*;

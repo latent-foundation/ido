@@ -1,7 +1,6 @@
 //! Notes section: tree reload, note/folder CRUD, inline rename, drag-to-move.
 //! `impl State` block — see [`super`].
 
-use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use super::*;

@@ -1,7 +1,6 @@
 //! The cross-section search palette + command dispatch. `impl State` block —
 //! see [`super`].
 
-use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use super::*;
