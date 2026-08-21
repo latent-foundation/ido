@@ -166,11 +166,12 @@ The `/latent-design` Claude skill surfaces these (symlinked at `.claude/skills/l
 ```sh
 just verify        # fmt-check + clippy (-D warnings) + all tests — exactly what CI runs
 just fmt           # cargo fmt + leptosfmt (the only correct way to format — see below)
-just check         # cargo clippy --workspace -- -D warnings
-just test          # cargo test -p ido-store, -p ido, -p ido-mcp (three suites)
+just check         # cargo clippy --workspace -- -D warnings (stages the sidecar first)
+just test          # cargo test -p ido-store, -p ido, -p ido-mcp (three suites; sidecar first)
 just mcp           # run ido-mcp against the most recent well
 just mcp-inspect   # run ido-mcp under the MCP inspector for protocol-level debugging
 just sidecar       # build release ido-mcp and stage as Tauri sidecar binary
+                   # (a dependency of check/test/dev — see the rule below)
 just dev           # cargo tauri dev: Trunk on :1420 + native window, hot reload (builds sidecar first)
 just dev-debug     # same, + WebView2 CDP remote debugging on :9222 (Windows only —
                    # see `.claude/skills/run` for the driver script: screenshots, DOM
@@ -182,6 +183,12 @@ cargo tauri icon src-tauri/app-icon.svg    # regenerate the app-icon set from th
 cargo check -p ido-ui                      # fast type-check of just the frontend (host target is fine)
 ```
 
+- **Anything that compiles the src-tauri crate needs the staged sidecar.** tauri-build
+  validates `bundle.externalBin` on every compile, so a missing
+  `src-tauri/binaries/ido-mcp-<triple>` fails the *build script* — not just a bundle. The
+  directory is gitignored (built per-machine, per-triple), so `check`, `test`, `dev` and
+  `dev-debug` all depend on `sidecar`, and both CI workflows stage it before compiling.
+  `just` runs a dependency at most once per invocation, so `just verify` builds it once.
 - **Never run `cargo fmt` alone** — it cannot parse Leptos `view!` macros and corrupts them.
   Always `just fmt`, which runs `cargo fmt` then `leptosfmt src`. Editor format-on-save delegates
   to `leptosfmt --stdin --rustfmt` via `rust-analyzer.toml` (+ `.vscode/settings.json`).

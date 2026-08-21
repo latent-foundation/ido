@@ -51,8 +51,15 @@ jobs:
       # `beforeBuildCommand` is `trunk build`, and the bundle is driven by the
       # Tauri CLI — neither ships on the runner. Slow on a cold cache (~10 min),
       # near-free afterwards since rust-cache restores ~/.cargo/bin.
-      - name: Install trunk + tauri-cli
-        run: cargo install trunk tauri-cli --locked
+      - name: Install trunk + tauri-cli + just
+        run: cargo install trunk tauri-cli just --locked
+
+      # tauri-build validates `bundle.externalBin` on every compile of the
+      # src-tauri crate, so this has to happen before `cargo test -p ido` as
+      # well as before the bundle. src-tauri/binaries/ is gitignored (built
+      # per-machine, per-triple), so a fresh checkout never has it.
+      - name: Stage MCP sidecar
+        run: just sidecar
 
       # CI only runs on main and PRs, so a tag can point at a commit that never
       # passed it. `--locked` also fails loudly if Cargo.lock is stale, which

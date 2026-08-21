@@ -16,26 +16,32 @@ fmt-check:
     cargo fmt --check
     leptosfmt --check src
 
-# Type-check + lint the whole workspace, warnings as errors.
-check:
+# Type-check + lint the whole workspace, warnings as errors. Depends on
+# `sidecar` because compiling the `ido` (src-tauri) crate runs tauri-build,
+# which validates `bundle.externalBin` and hard-fails when the staged binary is
+# missing — as it is on any fresh clone, since src-tauri/binaries/ is gitignored.
+check: sidecar
     cargo clippy --workspace -- -D warnings
 
 # Backend logic tests (the store: tree / create / rename / move / delete)
 # plus the MCP server's tool rendering and its end-to-end stdio test.
-test:
+# Needs `sidecar` for the same reason `check` does (`cargo test -p ido`).
+test: sidecar
     cargo test -p ido-store
     cargo test -p ido
     cargo test -p ido-mcp
 
-# Exactly what CI runs.
+# Exactly what CI runs. `just` runs each dependency at most once per
+# invocation, so the sidecar `check` and `test` both pull in is built once.
 verify: fmt-check check test
 
 # Build ido-mcp (release) and stage it as the Tauri sidecar for this host's
 # target triple (docs/mcp-server.md P3): `bundle.externalBin` in
 # tauri.conf.json expects `src-tauri/binaries/ido-mcp-<triple>[.exe]` to exist
-# at dev/build time. `cargo tauri dev` needs it (wired below via `dev`/
-# `dev-debug`); `cargo tauri build` needs it too but isn't a just recipe here,
-# so run `just sidecar` before it by hand.
+# at dev/build time — so *anything* that compiles the src-tauri crate needs it,
+# not just a bundle: `check`, `test`, `dev` and `dev-debug` all depend on this
+# recipe. `cargo tauri build` needs it too but isn't a just recipe here, so run
+# `just sidecar` before it by hand.
 [windows]
 sidecar:
     cargo build --release -p ido-mcp
