@@ -75,6 +75,16 @@ pub struct ModelSpec {
     pub doc_prefix: &'static str,
     /// L2-normalize the pooled vector (true for every shipped candidate).
     pub normalize: bool,
+    /// The pinned HuggingFace revision — a commit sha, never `main`. §6.3's
+    /// "pin the model revision": `resolve/{revision}/` takes one, so an
+    /// upstream re-upload can neither change the bytes we fetch nor silently
+    /// invalidate the [`ModelSpec::files`] hashes below.
+    pub revision: &'static str,
+    /// The files to fetch from the repo, each pinned to its lowercase-hex
+    /// sha256 (`(name, sha256)`). Names are plain — no path separators — so
+    /// one flat directory holds one model. The download verifies these before
+    /// a file is moved into place ([`super::download::ensure_model`]).
+    pub files: &'static [(&'static str, &'static str)],
 }
 
 /// The shipped default (§6.3): best retrieval quality per byte, ~133 MB,
@@ -88,6 +98,22 @@ pub const BGE_SMALL_EN_V15: ModelSpec = ModelSpec {
     query_prefix: "Represent this sentence for searching relevant passages: ",
     doc_prefix: "",
     normalize: true,
+    // The repo's `main` as of 2026-08-21 — pinned by sha so it stays that.
+    revision: "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+    files: &[
+        (
+            "config.json",
+            "094f8e891b932f2000c92cfc663bac4c62069f5d8af5b5278c4306aef3084750",
+        ),
+        (
+            "tokenizer.json",
+            "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+        ),
+        (
+            "model.safetensors",
+            "3c9f31665447c8911517620762200d2245a2518d6e7208acc78cd9db317e21ad",
+        ),
+    ],
 };
 
 /// The model the index builds with unless configured otherwise.
