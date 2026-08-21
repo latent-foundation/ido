@@ -14,17 +14,16 @@ config/cache under `.ido/`. A left **rail** switches sections; per-pane **tab st
 several entries open (and a second editor pane can **split** off, side by side); a `Ctrl+K`
 **command palette** searches all three sections at once. [README.md](README.md) is the human-facing
 overview; this file is the working guide — the **Current state** section below tracks what's built and
-what's next. (Project docs live in this codebase + an ido well; `docs/` holds the working design
-docs — currently [mcp-server.md](docs/mcp-server.md), the plan for exposing the store over MCP
-with semantic search.)
+what's next. (Project docs live in the **latent well** — an ido well that is the ecosystem's single
+authoritative doc home. This repo's design doc `docs/mcp-server.md` moved there as the wiki
+page `ido-mcp-design`; the old path holds a pointer stub.)
 
 ## The big picture: a 3-layer app
 
 This app deliberately owns very little. It composes two shared upstream layers:
 
 - **`vendor/latent-design`** (git submodule) — all styling: CSS tokens, component styles,
-  self-hosted fonts, SVG assets, **and the ecosystem's engineering/design canon** under
-  `vendor/latent-design/docs/`. Trunk needs real file paths, so this is a submodule, not a
+  self-hosted fonts, SVG assets. Trunk needs real file paths, so this is a submodule, not a
   crate. **Run `git submodule update --init --recursive` after cloning** or the build can't
   find tokens/fonts and renders unstyled.
 - **`latent-ui`** (Cargo git dep, pinned tag in [Cargo.toml](Cargo.toml)) — shared Rust/Leptos
@@ -44,7 +43,7 @@ Four packages in one Cargo workspace:
   of "how a task file is parsed".
 - **`crates/ido-mcp`** — a **read-only MCP stdio server** over the store: seven tools, keyword
   search, shipped inside the app as a Tauri sidecar — see the **MCP** paragraph under Current
-  state and [docs/mcp-server.md](docs/mcp-server.md).
+  state and the well's `ido-mcp-design` page.
 - **`src-tauri/`** — the Tauri shell: `commands.rs` is a wall of one-line `#[tauri::command]`
   wrappers over `ido_store::*` (same command names + arg shapes, so the frontend `ipc` layer
   never noticed the split), beside the genuinely-Tauri modules (`window` / `external` /
@@ -148,18 +147,21 @@ Every package is split into small, documented modules (module-level `//!` + item
 
 ## Read the canon, don't restate it
 
-Engineering and design rules for the whole ecosystem live in the submodule and ship into this
-tree. Consult these before changing architecture, conventions, or visuals — they are the
-source of truth:
+Engineering and design rules for the whole ecosystem live in the **latent well** (moved out
+of `vendor/latent-design/docs/`, which now holds pointer stubs). Consult these before
+changing architecture, conventions, or visuals — they are the source of truth:
 
-- `vendor/latent-design/docs/ecosystem.md` — the 3-layer model, CSS cascade, anti-FOUC, pinning
-- `vendor/latent-design/docs/conventions.md` — Rust/Leptos/Trunk/theme conventions
-- `vendor/latent-design/docs/bootstrap-new-app.md` — how this app is wired
-- `vendor/latent-design/README.md` — the brand canon (color, type, voice)
+- well wiki page `ecosystem` — the 3-layer model, CSS cascade, anti-FOUC, pinning
+- well wiki page `conventions` — Rust/Leptos/Trunk/theme conventions
+- well wiki page `bootstrap-new-app` — how this app is wired
+- `vendor/latent-design/README.md` — the brand canon (color, type, voice; still in the submodule)
 
-The `/latent-design` Claude skill surfaces these (symlinked at `.claude/skills/latent-design`).
-`.claude/` is gitignored, so the symlink is machine-local — recreate it per
-`bootstrap-new-app.md` step 3 if the skill is missing.
+Read the well directly, or query it over MCP: register the `ido-docs` server from
+[.mcp.json.example](.mcp.json.example) pointing at the well folder.
+
+The `/latent-design` Claude skill surfaces the brand canon (symlinked at
+`.claude/skills/latent-design`). `.claude/` is gitignored, so the symlink is machine-local —
+recreate it per the well's `bootstrap-new-app` page (step 3) if the skill is missing.
 
 ## Commands
 
@@ -262,8 +264,8 @@ cargo check -p ido-ui                      # fast type-check of just the fronten
   through `State::open_link`: internal `[[wikilinks]]` (`ido:wiki/<slug>`) open/create the page in a
   tab; everything else goes to `open_external` (OS browser). A navigated webview white-screens the
   app. Raw HTML in notes is rendered as text, not executed (see `markdown.rs`).
-- **Both crates are edition 2024**, matching the ecosystem convention in
-  `vendor/latent-design/docs/conventions.md`. Two consequences bite in practice: `gen` is a
+- **Both crates are edition 2024**, matching the ecosystem convention in the well's
+  `conventions` page. Two consequences bite in practice: `gen` is a
   **reserved keyword** (generation-counter locals are named `this_gen`, not `gen`), and **let-chains
   are stable** — clippy's `collapsible_if` now *requires* `if let Some(x) = a && cond` instead of
   nested `if`s, so `-D warnings` fails on the old form.
@@ -494,11 +496,11 @@ and the tool namespace (`mcp__ido-dev__…`) names which well answered. Both set
 lock held by `just dev` or `just verify`.
 
 Deferred by design: resources, prompts, writes, and the `mode` search param
-(see [docs/mcp-server.md](docs/mcp-server.md)).
+(see the well's `ido-mcp-design` page).
 
 **What's next** — MCP P0 (store extraction) + P1 (read-only server) + the non-semantic P3 slice
 (sidecar + settings surface) have landed; the next step is **P2 — the semantic index**
-([docs/mcp-server.md](docs/mcp-server.md)): candle embeddings, hybrid RRF fusion, `mode` on
+(the well's `ido-mcp-design` page): candle embeddings, hybrid RRF fusion, `mode` on
 `search`, the eval harness — then the rest of P3 (model download UI, in-app semantic search)
 and P4 (gated writes, resources/prompts).
 Also open: the calendar's remaining phases (ICS export, read-only external feeds), small rough

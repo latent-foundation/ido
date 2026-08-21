@@ -84,7 +84,8 @@ register once:
 
 The server exposes seven read-only tools (`well_info`, `search`, `get_entry`, `list_entries`,
 `backlinks`, `list_tasks`, `list_goals`) over keyword search today; a semantic layer is
-planned. Full design and roadmap: [`docs/mcp-server.md`](docs/mcp-server.md).
+planned. Full design and roadmap: the `ido-mcp-design` page in the **latent well** — the
+ecosystem's single authoritative doc home (`docs/mcp-server.md` is now a pointer stub).
 
 For development, `just mcp` runs the server directly against your most-recent well (stderr to
 the terminal) and `just mcp-inspect` runs it under the
@@ -93,9 +94,8 @@ the terminal) and `just mcp-inspect` runs it under the
 ## Develop
 
 Prerequisites: the Rust toolchain with the `wasm32-unknown-unknown` target, plus
-`just`, `trunk`, `leptosfmt`, and the Tauri CLI. See
-[`vendor/latent-design/docs/bootstrap-new-app.md`](vendor/latent-design/docs/bootstrap-new-app.md)
-for the full setup.
+`just`, `trunk`, `leptosfmt`, and the Tauri CLI. See the latent well's
+`bootstrap-new-app` page for the full setup.
 
 ```sh
 git submodule update --init --recursive   # populate vendor/latent-design (styling + canon)
@@ -107,6 +107,8 @@ just verify                                # format check + lint — exactly wha
 ## Learn more
 
 - [CLAUDE.md](CLAUDE.md) — architecture, commands, conventions, current state, and what's next.
-- [`vendor/latent-design/docs/`](vendor/latent-design/docs/) — the ecosystem canon
-  (architecture, conventions, glossary).
+- the **latent well** — the ecosystem canon and every design doc, as linked wiki pages
+  (`ecosystem`, `conventions`, `bootstrap-new-app`, `glossary`, `ido-mcp-design`, …),
+  readable in ido or over its MCP server. The old `vendor/latent-design/docs/` paths
+  hold pointer stubs.
 - `vendor/latent-design/README.md` — the latent. brand canon.
