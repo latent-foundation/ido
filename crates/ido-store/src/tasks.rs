@@ -318,7 +318,6 @@ fn edit_task(
 }
 
 /// The board columns for this well (from `.ido/well.toml`).
-#[tauri::command]
 pub fn task_columns(well: String) -> Vec<String> {
     crate::wells::read_manifest(&well).columns
 }
@@ -326,14 +325,12 @@ pub fn task_columns(well: String) -> Vec<String> {
 /// The well's auto-archive-done-after-N-days setting (`.ido/well.toml`);
 /// `None` means off. Mirrors [`task_columns`]'s read-only manifest access —
 /// the settings UI's other half of [`crate::wells::set_archive_days`].
-#[tauri::command]
 pub fn archive_days(well: String) -> Option<u32> {
     crate::wells::read_manifest(&well).archive_done_after_days
 }
 
 /// Every task in the well, sorted by `order` then id. Subfolders (e.g. future
 /// goals) and hidden / non-`.md` files are skipped.
-#[tauri::command]
 pub fn list_tasks(well: String) -> Vec<Task> {
     let Ok(entries) = fs::read_dir(section_dir(&well, Section::Tasks)) else {
         return Vec::new();
@@ -362,7 +359,6 @@ pub fn list_tasks(well: String) -> Vec<Task> {
 /// (free text; blank = untitled), optionally due `due` (`YYYY-MM-DD`; `None` or
 /// blank sets no due date). The file stem is the title's slug, uniquified
 /// (`fix-login`, `fix-login-2`, …) — duplicate titles are fine. Returns its id.
-#[tauri::command]
 pub fn create_task(
     well: String,
     status: String,
@@ -396,7 +392,6 @@ pub fn create_task(
 /// through [`apply_status`], so entering/leaving the done column stamps or
 /// clears `completed:`; a recurring task entering done also spawns its next
 /// occurrence ([`prepare_spawn`] / [`spawn_next`]).
-#[tauri::command]
 pub fn move_task(well: String, id: String, status: String) -> Result<(), String> {
     let order = next_order(&list_tasks(well.clone()), &status).to_string();
     let done_col = done_column(&well);
@@ -422,7 +417,6 @@ pub fn move_task(well: String, id: String, status: String) -> Result<(), String>
 /// is left alone. A recurring card pulled into done spawns its next occurrence
 /// after the loop (into the first column, so it never disturbs this reorder;
 /// even in a single-column well it just appends past the reordered ids).
-#[tauri::command]
 pub fn reorder_column(well: String, status: String, ids: Vec<String>) -> Result<(), String> {
     let done_col = done_column(&well);
     let first_col = first_column(&well);
@@ -451,7 +445,6 @@ pub fn reorder_column(well: String, status: String, ids: Vec<String>) -> Result<
 /// status picker) routes through [`apply_status`] like every other status
 /// change, and — like the other status paths — spawns the next occurrence of a
 /// recurring task on entering done.
-#[tauri::command]
 pub fn set_task_field(well: String, id: String, key: String, value: String) -> Result<(), String> {
     if key == "status" {
         let done_col = done_column(&well);
@@ -471,7 +464,6 @@ pub fn set_task_field(well: String, id: String, key: String, value: String) -> R
 }
 
 /// Replace a task's markdown body, preserving its frontmatter.
-#[tauri::command]
 pub fn update_task_body(well: String, id: String, body: String) -> Result<(), String> {
     edit_task(&well, &id, |_, b| *b = body)
 }
@@ -479,7 +471,6 @@ pub fn update_task_body(well: String, id: String, body: String) -> Result<(), St
 /// Retitle task `id` to `name` (free text, stored as `title:`), re-slugging the
 /// file to match. A colliding slug is uniquified (duplicate titles are fine), and
 /// a punctuation-only title keeps the current file name. Returns the (new) id.
-#[tauri::command]
 pub fn rename_task(well: String, id: String, name: String) -> Result<String, String> {
     let title = name.trim().to_string();
     if title.is_empty() {
@@ -506,7 +497,6 @@ pub fn rename_task(well: String, id: String, name: String) -> Result<String, Str
 
 /// Delete task `id`, returning its raw file content so the delete can be undone
 /// (see [`restore_task`]).
-#[tauri::command]
 pub fn delete_task(well: String, id: String) -> Result<String, String> {
     let path = task_path(&well, &id);
     let content = fs::read_to_string(&path).unwrap_or_default();
@@ -515,7 +505,6 @@ pub fn delete_task(well: String, id: String) -> Result<String, String> {
 }
 
 /// Recreate task `id` from raw markdown (undo of [`delete_task`]).
-#[tauri::command]
 pub fn restore_task(well: String, id: String, content: String) -> Result<(), String> {
     let dir = section_dir(&well, Section::Tasks);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -552,7 +541,6 @@ fn retarget_goal(well: &str, old: &str, new: Option<&str>) {
 }
 
 /// Every goal in the well, alphabetical.
-#[tauri::command]
 pub fn list_goals(well: String) -> Vec<Goal> {
     let Ok(entries) = fs::read_dir(goals_dir(&well)) else {
         return Vec::new();
@@ -589,7 +577,6 @@ pub fn list_goals(well: String) -> Vec<Goal> {
 }
 
 /// Create a uniquely-named empty goal, appended at the end. Returns its id.
-#[tauri::command]
 pub fn create_goal(well: String) -> Result<String, String> {
     let dir = goals_dir(&well);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -610,7 +597,6 @@ pub fn create_goal(well: String) -> Result<String, String> {
 }
 
 /// Renumber the goals bar to match `ids` (drag-to-reorder); `order` = index.
-#[tauri::command]
 pub fn reorder_goals(well: String, ids: Vec<String>) -> Result<(), String> {
     for (i, id) in ids.iter().enumerate() {
         let order = i.to_string();
@@ -622,7 +608,6 @@ pub fn reorder_goals(well: String, ids: Vec<String>) -> Result<(), String> {
 }
 
 /// Set (or clear, when blank) a goal field (`target`), preserving the body.
-#[tauri::command]
 pub fn set_goal_field(well: String, id: String, key: String, value: String) -> Result<(), String> {
     edit_md(goal_path(&well, &id), |fields, _| {
         set_field(fields, &key, &value)
@@ -630,7 +615,6 @@ pub fn set_goal_field(well: String, id: String, key: String, value: String) -> R
 }
 
 /// Replace a goal's markdown body, preserving its frontmatter.
-#[tauri::command]
 pub fn update_goal_body(well: String, id: String, body: String) -> Result<(), String> {
     edit_md(goal_path(&well, &id), |_, b| *b = body)
 }
@@ -638,7 +622,6 @@ pub fn update_goal_body(well: String, id: String, body: String) -> Result<(), St
 /// Retitle goal `id` to `name` (free text, stored as `title:`), re-slugging the
 /// file to match and re-pointing tasks that target it. Same slug rules as
 /// [`rename_task`]. Returns the (new) id.
-#[tauri::command]
 pub fn rename_goal(well: String, id: String, name: String) -> Result<String, String> {
     let title = name.trim().to_string();
     if title.is_empty() {
@@ -667,7 +650,6 @@ pub fn rename_goal(well: String, id: String, name: String) -> Result<String, Str
 /// Delete goal `id`, clearing the `goal:` field of any task that targeted it.
 /// Returns its raw file content so the delete can be undone (see [`restore_goal`];
 /// undo restores the goal file only — tasks' cleared `goal:` refs are not re-pointed).
-#[tauri::command]
 pub fn delete_goal(well: String, id: String) -> Result<String, String> {
     let path = goal_path(&well, &id);
     let content = fs::read_to_string(&path).unwrap_or_default();
@@ -677,7 +659,6 @@ pub fn delete_goal(well: String, id: String) -> Result<String, String> {
 }
 
 /// Recreate goal `id` from raw markdown (undo of [`delete_goal`]).
-#[tauri::command]
 pub fn restore_goal(well: String, id: String, content: String) -> Result<(), String> {
     let dir = goals_dir(&well);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;

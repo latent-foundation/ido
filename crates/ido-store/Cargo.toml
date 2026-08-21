@@ -1,0 +1,22 @@
+[package]
+name = "ido-store"
+version = "1.1.0"
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# `.ido/well.toml` well manifest (read/write).
+toml = "1.1.2"
+# Encoding image bytes as `data:` URIs for inline rendering (see `assets`).
+base64 = "0.23"
+# Local "today" for stamping `completed:` on a task's status transition.
+chrono = "0.4"
+# Counting task-list checkboxes in a task body (`- [ ]`/`- [x]`) via parser
+# events rather than line scanning, so fenced-code `- [ ]` is never counted —
+# same version as the frontend (`Cargo.toml`), no HTML rendering needed here.
+pulldown-cmark = { version = "0.13", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"

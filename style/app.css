@@ -3325,8 +3325,10 @@ select.ido-drawer-input {
 
 .ido-modal {
   width: 100%;
-  max-width: 360px;
+  max-width: 480px;
+  max-height: 84vh;
   padding: var(--space-5);
+  overflow-y: auto;
   background: var(--color-surface);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-lg);
@@ -3673,6 +3675,81 @@ select.ido-drawer-input {
   font-family: var(--font-ui);
   font-size: 12px;
   color: var(--color-text-muted);
+}
+
+/* mcp agent-access section: sidecar status + copy-paste client snippets */
+.ido-settings-mcp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.ido-settings-mcp-status {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.ido-settings-mcp-status code {
+  /* Block + ellipsis: a well path is one unbreakable token, and inline it
+     would widen the modal past its max-width (dragging in a modal-wide
+     horizontal scrollbar) instead of truncating like the well row does. */
+  display: block;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ido-settings-mcp-missing {
+  color: var(--color-text-secondary);
+}
+
+.ido-settings-snippet {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: 10px 12px;
+  background: var(--color-code-bg);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.ido-settings-snippet pre {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow-x: auto;
+}
+
+.ido-settings-snippet pre code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: var(--leading-normal);
+  color: var(--color-code-text);
+  white-space: pre;
+}
+
+.ido-settings-copy-btn {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  transition: border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-settings-copy-btn:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
 }
 
 /* scrollbars — thin, brand-toned ====================================== */

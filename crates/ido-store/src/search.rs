@@ -21,7 +21,6 @@ const SNIPPET_CHARS: usize = 120;
 /// substring). Ranked by relevance — a title match dominates, then the number of
 /// occurrences in the body / tags; ties keep section order (notes → wiki →
 /// tasks). Archived tasks are excluded. Empty / whitespace queries return nothing.
-#[tauri::command]
 pub fn search(well: String, query: String) -> Vec<SearchHit> {
     let q = query.trim().to_lowercase();
     if q.is_empty() {

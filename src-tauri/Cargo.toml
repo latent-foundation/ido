@@ -3,7 +3,7 @@ name = "ido"
 # The single source of truth for the app version: `tauri.conf.json` deliberately
 # omits `version`, so Tauri derives the bundle/installer version from here.
 # A release tag `vX.Y.Z` must match this.
-version = "1.0.0"
+version = "1.1.0"
 description = "ido is a minimalistic productivity tool for managing tasks and projects, with notes and wikis."
 authors = ["Maksymilian Neumann <neumann.maks@gmail.com>"]
 edition = "2024"
@@ -27,16 +27,6 @@ tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["sync"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# `.ido/well.toml` well manifest (read/write).
-toml = "1.1.2"
-# Encoding image bytes as `data:` URIs for inline rendering (see `assets`).
-base64 = "0.23"
-# Local "today" for stamping `completed:` on a task's status transition.
-chrono = "0.4"
-# Counting task-list checkboxes in a task body (`- [ ]`/`- [x]`) via parser
-# events rather than line scanning, so fenced-code `- [ ]` is never counted —
-# same version as the frontend (`Cargo.toml`), no HTML rendering needed here.
-pulldown-cmark = { version = "0.13", default-features = false }
-
-[dev-dependencies]
-tempfile = "3"
+# The tauri-free local-first store (notes/wiki/tasks/wells/search/session);
+# this crate wraps it in `#[tauri::command]`s. See `crates/ido-store`.
+ido-store = { path = "../crates/ido-store" }

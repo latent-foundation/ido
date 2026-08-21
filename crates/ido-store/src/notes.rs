@@ -74,14 +74,12 @@ pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
 }
 
 /// The notes section's whole tree of folders and notes.
-#[tauri::command]
 pub fn list_tree(well: String) -> Result<Vec<TreeNode>, String> {
     let root = section_dir(&well, Section::Notes);
     Ok(build_tree(&root, &root))
 }
 
 /// Read a note's markdown body.
-#[tauri::command]
 pub fn read_note(well: String, id: String) -> Result<String, String> {
     let root = section_dir(&well, Section::Notes);
     fs::read_to_string(note_path(&root, &id)).map_err(|e| e.to_string())
@@ -95,7 +93,6 @@ fn to_millis(t: SystemTime) -> Option<u64> {
 }
 
 /// A note's filesystem timestamps (creation + last-modified).
-#[tauri::command]
 pub fn note_meta(well: String, id: String) -> Result<NoteMeta, String> {
     let root = section_dir(&well, Section::Notes);
     let meta = fs::metadata(note_path(&root, &id)).map_err(|e| e.to_string())?;
@@ -106,7 +103,6 @@ pub fn note_meta(well: String, id: String) -> Result<NoteMeta, String> {
 }
 
 /// Write a note's markdown body, creating any missing parent folders.
-#[tauri::command]
 pub fn write_note(well: String, id: String, content: String) -> Result<(), String> {
     let root = section_dir(&well, Section::Notes);
     let path = note_path(&root, &id);
@@ -117,7 +113,6 @@ pub fn write_note(well: String, id: String, content: String) -> Result<(), Strin
 }
 
 /// Create a uniquely-named empty note in `parent` (`""` = root). Returns its id.
-#[tauri::command]
 pub fn create_note(well: String, parent: String) -> Result<String, String> {
     let root = section_dir(&well, Section::Notes);
     let dir = if parent.is_empty() {
@@ -132,7 +127,6 @@ pub fn create_note(well: String, parent: String) -> Result<String, String> {
 }
 
 /// Create a uniquely-named folder in `parent` (`""` = root). Returns its id.
-#[tauri::command]
 pub fn create_folder(well: String, parent: String) -> Result<String, String> {
     let root = section_dir(&well, Section::Notes);
     let base = if parent.is_empty() {
@@ -146,7 +140,6 @@ pub fn create_folder(well: String, parent: String) -> Result<String, String> {
 }
 
 /// Rename a note or folder in place (parent unchanged). Returns the new id.
-#[tauri::command]
 pub fn rename_entry(
     well: String,
     id: String,
@@ -177,7 +170,6 @@ pub fn rename_entry(
 
 /// Delete a note, or an *empty* folder. Non-empty folders are refused so notes
 /// are never destroyed implicitly.
-#[tauri::command]
 pub fn delete_entry(well: String, id: String, is_dir: bool) -> Result<(), String> {
     let root = section_dir(&well, Section::Notes);
     if is_dir {
@@ -198,7 +190,6 @@ pub fn delete_entry(well: String, id: String, is_dir: bool) -> Result<(), String
 
 /// Move a note or folder into the `dest` folder (`""` = well root). Returns the
 /// new id. Refuses to move a folder into itself or a descendant.
-#[tauri::command]
 pub fn move_entry(well: String, id: String, is_dir: bool, dest: String) -> Result<String, String> {
     let base = id.rsplit('/').next().unwrap_or(&id);
     let new_id = join_rel(&dest, base);

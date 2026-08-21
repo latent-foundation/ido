@@ -15,7 +15,6 @@ fn session_path(well: &str) -> PathBuf {
 }
 
 /// A well's saved session (open tabs); empty when absent or unreadable.
-#[tauri::command]
 pub fn read_session(well: String) -> Session {
     fs::read_to_string(session_path(&well))
         .ok()
@@ -24,7 +23,6 @@ pub fn read_session(well: String) -> Session {
 }
 
 /// Persist a well's open tabs + active index. Best-effort.
-#[tauri::command]
 pub fn write_session(well: String, tabs: Vec<String>, active: Option<usize>) -> Result<(), String> {
     let session = Session { tabs, active };
     let path = session_path(&well);

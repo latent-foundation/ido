@@ -1,13 +1,19 @@
-//! Opening and creating wells, and the native folder picker that feeds them.
+//! Opening, creating, and migrating wells, plus their `.ido/well.toml`-backed
+//! settings (columns, auto-archive, saved views).
+//!
+//! [`open_well`] and [`create_well`] here are the *pure* halves of the
+//! frontend's `open_well` / `create_well` commands — the is-a-folder check,
+//! scaffolding, and welcome-note seed. The native folder picker and the
+//! recent-wells registry write both need a Tauri `AppHandle`, which this
+//! crate deliberately doesn't depend on, so those live in `src-tauri`
+//! (`commands::pick_folder` / `commands::open_well` / `commands::create_well`,
+//! the latter two calling straight through to the functions here).
 
 use std::fs;
 use std::path::Path;
 
-use tauri_plugin_dialog::DialogExt;
-
 use crate::model::{SavedView, Section, SectionFlags, WellManifest, WellRef};
 use crate::paths::{slugify, unique_name, valid_name, well_ref};
-use crate::registry::register_well;
 
 /// The reserved subfolders + manifest every well has. Idempotent: re-creating
 /// existing folders is a no-op, and the manifest is written only when absent
@@ -47,7 +53,11 @@ fn fresh_manifest() -> WellManifest {
 }
 
 /// Read a well's `.ido/well.toml`, falling back to a default manifest.
-pub(crate) fn read_manifest(well: &str) -> WellManifest {
+///
+/// `pub` (not `pub(crate)`, unlike the rest of this module's helpers): the MCP
+/// server's `well_info` tool reports the enabled sections across the crate
+/// boundary. Read-only — the fallback is returned, never written.
+pub fn read_manifest(well: &str) -> WellManifest {
     let path = Path::new(well).join(".ido").join("well.toml");
     fs::read_to_string(path)
         .ok()
@@ -84,7 +94,6 @@ fn legacy_entries(root: &Path) -> Vec<(String, std::path::PathBuf)> {
 /// ([`crate::tasks::sweep_archive`]) — so a well opened after time away never
 /// shows tasks that should already have aged into the archive. Idempotent —
 /// safe on every open.
-#[tauri::command]
 pub fn migrate_well(well: String) -> Result<(), String> {
     let root = Path::new(&well);
     if !root.join(".ido").join("well.toml").exists() {
@@ -136,7 +145,6 @@ fn upgrade_columns(well: &str) {
 /// `in-progress`) — with blanks dropped and duplicates removed, order kept.
 /// Errs when nothing valid remains. Returns the stored set. Tasks whose status
 /// no longer matches a column simply surface in the backlog (no data changes).
-#[tauri::command]
 pub fn set_task_columns(well: String, columns: Vec<String>) -> Result<Vec<String>, String> {
     let mut cols: Vec<String> = Vec::new();
     for c in columns {
@@ -161,7 +169,6 @@ pub fn set_task_columns(well: String, columns: Vec<String>) -> Result<Vec<String
 /// ([`crate::tasks::sweep_archive`]) — so newly setting it, or lowering the
 /// threshold, can archive tasks right away instead of waiting for the well's
 /// next open. Returns the stored value.
-#[tauri::command]
 pub fn set_archive_days(well: String, days: Option<u32>) -> Result<Option<u32>, String> {
     let mut manifest = read_manifest(&well);
     manifest.archive_done_after_days = days;
@@ -174,7 +181,6 @@ pub fn set_archive_days(well: String, days: Option<u32>) -> Result<Option<u32>, 
 
 /// The well's saved tasks-toolbar views (`.ido/well.toml`), in stored order.
 /// A read like [`crate::tasks::task_columns`] / [`crate::tasks::archive_days`].
-#[tauri::command]
 pub fn saved_views(well: String) -> Vec<SavedView> {
     read_manifest(&well).views
 }
@@ -182,7 +188,6 @@ pub fn saved_views(well: String) -> Vec<SavedView> {
 /// Replace the well's saved views wholesale (mirrors [`set_task_columns`]):
 /// views whose trimmed name is blank are dropped, the rest persist in order.
 /// Returns the stored list.
-#[tauri::command]
 pub fn set_saved_views(well: String, views: Vec<SavedView>) -> Result<Vec<SavedView>, String> {
     let views: Vec<SavedView> = views
         .into_iter()
@@ -214,34 +219,20 @@ fn has_md(dir: &Path) -> bool {
     false
 }
 
-/// Open the OS folder picker. Resolves to the chosen path, or `None` if the
-/// user cancels. (Used for both "open a well" and "choose a location".)
-#[tauri::command]
-pub async fn pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog().file().pick_folder(move |path| {
-        let _ = tx.send(path);
-    });
-    let picked = rx.await.map_err(|e| e.to_string())?;
-    Ok(picked
-        .and_then(|p| p.into_path().ok())
-        .map(|p| p.to_string_lossy().into_owned()))
-}
-
-/// Open an existing folder as a well and record it as recent.
-#[tauri::command]
-pub fn open_well(app: tauri::AppHandle, path: String) -> Result<WellRef, String> {
+/// Open an existing folder as a well. The `AppHandle`-needing recent-wells
+/// registry write is the caller's job (`src-tauri`'s `commands::open_well`).
+pub fn open_well(path: String) -> Result<WellRef, String> {
     if !Path::new(&path).is_dir() {
         return Err(format!("not a folder: {path}"));
     }
-    register_well(&app, &path);
     Ok(well_ref(&path))
 }
 
-/// Create `parent/name` as a new well, scaffold its sections, seed a welcome
-/// note into `notes/` if it's empty, and record it as recent.
-#[tauri::command]
-pub fn create_well(app: tauri::AppHandle, parent: String, name: String) -> Result<WellRef, String> {
+/// Create `parent/name` as a new well, scaffold its sections, and seed a
+/// welcome note into `notes/` if it's empty. The `AppHandle`-needing
+/// recent-wells registry write is the caller's job (`src-tauri`'s
+/// `commands::create_well`).
+pub fn create_well(parent: String, name: String) -> Result<WellRef, String> {
     let name = valid_name(&name)?;
     let path = Path::new(&parent).join(name);
     fs::create_dir_all(&path).map_err(|e| e.to_string())?;
@@ -255,7 +246,6 @@ pub fn create_well(app: tauri::AppHandle, parent: String, name: String) -> Resul
         );
     }
     let path = path.to_string_lossy().into_owned();
-    register_well(&app, &path);
     Ok(well_ref(&path))
 }
 

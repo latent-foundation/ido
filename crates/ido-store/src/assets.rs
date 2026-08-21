@@ -36,7 +36,6 @@ fn mime_for(ext: &str) -> &'static str {
 /// uniquely-named file (the original name's stem + extension, defaulting to
 /// `png` when the source gave none). Returns the well-relative id
 /// (`assets/<file>`) to embed as `![](…)`.
-#[tauri::command]
 pub fn save_asset(well: String, name: String, bytes: Vec<u8>) -> Result<String, String> {
     let root = Path::new(&well).join(ASSETS_DIR);
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
@@ -53,7 +52,6 @@ pub fn save_asset(well: String, name: String, bytes: Vec<u8>) -> Result<String, 
 /// URI, for inline rendering — the reading/live views resolve an image's
 /// markdown path through this and cache the result (see the frontend's
 /// `State::resolve_asset`).
-#[tauri::command]
 pub fn read_asset(well: String, id: String) -> Result<String, String> {
     let path = Path::new(&well).join(&id);
     let bytes = fs::read(&path).map_err(|e| e.to_string())?;
