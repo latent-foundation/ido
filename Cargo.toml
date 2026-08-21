@@ -49,5 +49,5 @@ latex2mathml = "0.2"
 latent-ui = { git = "https://github.com/latent-foundation/latent-ui", tag = "v0.2.0" }
 
 [workspace]
-members = ["src-tauri"]
+members = ["src-tauri", "crates/ido-store", "crates/ido-mcp"]
 

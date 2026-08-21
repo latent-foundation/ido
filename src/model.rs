@@ -143,6 +143,19 @@ pub struct SearchHit {
     pub snippet: String,
 }
 
+/// What the settings pane needs to wire an MCP client at the current well —
+/// mirrors the backend `McpInfo`.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct McpInfo {
+    /// Absolute path to the bundled `ido-mcp` sidecar, if it was found next to
+    /// the running executable. `None` in a dev build before `just sidecar`.
+    pub bin: Option<String>,
+    /// A ready-to-paste `.mcp.json` snippet pointing at this well.
+    pub json: String,
+    /// A ready-to-paste `claude mcp add` one-liner.
+    pub cli: String,
+}
+
 /// One entry in a well's tree: a folder (with `children`) or a note.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TreeNode {

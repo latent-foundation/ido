@@ -27,4 +27,8 @@ target
 # dependency graph in CI as it did locally. Committing it is what lets a release
 # claim to correspond exactly to the tagged source.
 
+# The Tauri sidecar binary staged by `just sidecar` (docs/mcp-server.md P3) —
+# built per-machine per-target-triple, never committed.
+/src-tauri/binaries/
+
 .claude

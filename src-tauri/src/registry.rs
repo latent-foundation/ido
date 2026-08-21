@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 use tauri::Manager;
 
-use crate::model::WellRef;
-use crate::paths::well_ref;
+use ido_store::model::WellRef;
+use ido_store::paths::well_ref;
 
 /// Path to `wells.json`, creating the app data dir if needed.
 fn registry_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {

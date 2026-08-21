@@ -164,7 +164,6 @@ fn rewrite_dir_links(dir: &Path, old: &str, new: &str, recurse: bool) {
 /// alphabetical). A page node's `name` is its slug; folder nodes carry their
 /// wiki-relative path. Folders are display-only — a page's slug is its identity
 /// wherever the file lives.
-#[tauri::command]
 pub fn list_wiki(well: String) -> Vec<TreeNode> {
     let root = wiki_root(&well);
     build_tree(&root, &root)
@@ -172,7 +171,6 @@ pub fn list_wiki(well: String) -> Vec<TreeNode> {
 
 /// A wiki page's markdown body — empty when the page doesn't exist yet (so a
 /// freshly-clicked `[[wikilink]]` opens a blank, editable page).
-#[tauri::command]
 pub fn read_page(well: String, slug: String) -> String {
     find_page(&wiki_root(&well), &slug)
         .and_then(|p| fs::read_to_string(p).ok())
@@ -181,7 +179,6 @@ pub fn read_page(well: String, slug: String) -> String {
 
 /// Write a wiki page's body. An existing page is written where it lives (in
 /// whatever folder); a brand-new slug lands at the wiki root.
-#[tauri::command]
 pub fn write_page(well: String, slug: String, content: String) -> Result<(), String> {
     let root = wiki_root(&well);
     let path = find_page(&root, &slug).unwrap_or_else(|| root.join(format!("{slug}.md")));
@@ -194,7 +191,6 @@ pub fn write_page(well: String, slug: String, content: String) -> Result<(), Str
 /// Create a uniquely-named empty page (`untitled`, `untitled-2`, …) inside
 /// `folder` (`""` = the wiki root). The slug is unique **section-wide**, not just
 /// within the folder. Returns its slug.
-#[tauri::command]
 pub fn create_page(well: String, folder: String) -> Result<String, String> {
     let root = wiki_root(&well);
     let dir = if folder.is_empty() {
@@ -211,7 +207,6 @@ pub fn create_page(well: String, folder: String) -> Result<String, String> {
 /// Create `slug` as an empty page (at the wiki root) if it doesn't exist anywhere
 /// — backs "create on click" for an unresolved `[[wikilink]]`. A no-op when a
 /// page with that slug already exists (in any folder).
-#[tauri::command]
 pub fn ensure_page(well: String, slug: String) -> Result<(), String> {
     let root = wiki_root(&well);
     if find_page(&root, &slug).is_none() {
@@ -224,7 +219,6 @@ pub fn ensure_page(well: String, slug: String) -> Result<(), String> {
 /// Rename page `slug` to the slug of `name` (kept in its current folder), and
 /// rewrite every inbound `[[link]]` to follow it — across the wiki, notes, **and**
 /// task/goal bodies. The new slug must be free section-wide. Returns the new slug.
-#[tauri::command]
 pub fn rename_page(well: String, slug: String, name: String) -> Result<String, String> {
     let new_slug = slugify(&name);
     if new_slug.is_empty() {
@@ -250,7 +244,6 @@ pub fn rename_page(well: String, slug: String, name: String) -> Result<String, S
 }
 
 /// Delete wiki page `slug` (wherever it lives).
-#[tauri::command]
 pub fn delete_page(well: String, slug: String) -> Result<(), String> {
     let path = find_page(&wiki_root(&well), &slug).ok_or("page not found")?;
     fs::remove_file(path).map_err(|e| e.to_string())
@@ -259,7 +252,6 @@ pub fn delete_page(well: String, slug: String) -> Result<(), String> {
 /// Create a uniquely-named organisational folder in `parent` (`""` = the wiki
 /// root). Returns its wiki-relative id. Folders hold nothing but pages/subfolders
 /// and never affect a page's slug or its links.
-#[tauri::command]
 pub fn create_wiki_folder(well: String, parent: String) -> Result<String, String> {
     let root = wiki_root(&well);
     let base = if parent.is_empty() {
@@ -274,7 +266,6 @@ pub fn create_wiki_folder(well: String, parent: String) -> Result<String, String
 
 /// Rename a wiki folder in place (parent unchanged). Purely organisational — no
 /// page slug or link is touched. Returns the new id.
-#[tauri::command]
 pub fn rename_wiki_folder(well: String, path: String, name: String) -> Result<String, String> {
     let name = valid_name(&name)?;
     let new_id = join_rel(&parent_of(&path), name);
@@ -292,7 +283,6 @@ pub fn rename_wiki_folder(well: String, path: String, name: String) -> Result<St
 
 /// Delete an *empty* wiki folder. Non-empty folders are refused so pages are
 /// never destroyed implicitly (delete the pages first).
-#[tauri::command]
 pub fn delete_wiki_folder(well: String, path: String) -> Result<(), String> {
     let dir = wiki_root(&well).join(&path);
     if fs::read_dir(&dir)
@@ -307,7 +297,6 @@ pub fn delete_wiki_folder(well: String, path: String) -> Result<(), String> {
 /// Move a page or folder into the `dest` folder (`""` = the wiki root). Returns
 /// the new wiki-relative id. A page keeps its slug (only the file relocates), so
 /// its links never change; a folder can't move into itself or a descendant.
-#[tauri::command]
 pub fn move_wiki_entry(
     well: String,
     path: String,
@@ -452,7 +441,6 @@ fn task_backlinks(dir: &Path, kind: &str, slug: &str, out: &mut Vec<LinkRef>) {
 /// section (and every wiki folder). Wiki pages list first, then notes, then tasks
 /// and goals; each group alphabetical. Self-references are excluded. An on-demand
 /// scan — no cache yet.
-#[tauri::command]
 pub fn backlinks(well: String, slug: String) -> Vec<LinkRef> {
     let mut out = Vec::new();
     // Wiki pages (any folder, excluding the page itself).

@@ -37,10 +37,19 @@ This app deliberately owns very little. It composes two shared upstream layers:
 **This repo owns only `src/` (frontend logic) and `style/app.css` (page layout).** Never
 restate or fork the upstream layers here.
 
-Two crates in one Cargo workspace:
+Four packages in one Cargo workspace:
 - root crate **`ido-ui`** — the Leptos frontend; `index.html` is the Trunk entry point.
-- **`src-tauri/`** — the Rust backend and the **local-first store**. Tauri commands are the only
-  disk access, grouped by area (all `pub` in their module, listed in `generate_handler!`):
+- **`crates/ido-store`** — the tauri-free **local-first store** (no tauri, no wasm): all store
+  logic and its 81-test suite live here, so the app and the MCP server share one implementation
+  of "how a task file is parsed".
+- **`crates/ido-mcp`** — a **read-only MCP stdio server** over the store: seven tools, keyword
+  search, shipped inside the app as a Tauri sidecar — see the **MCP** paragraph under Current
+  state and [docs/mcp-server.md](docs/mcp-server.md).
+- **`src-tauri/`** — the Tauri shell: `commands.rs` is a wall of one-line `#[tauri::command]`
+  wrappers over `ido_store::*` (same command names + arg shapes, so the frontend `ipc` layer
+  never noticed the split), beside the genuinely-Tauri modules (`window` / `external` /
+  `registry` / `mcp`). Tauri commands are the only disk access the app has, grouped by area
+  (all `pub` in their module, listed in `generate_handler!`):
   - **wells:** `recent_wells` / `pick_folder` / `open_well` / `create_well` / `migrate_well` /
     `set_task_columns` (the settings column editor; names slugified + deduped, order kept) /
     `set_archive_days` (the auto-archive threshold; its write also runs the sweep immediately) /
@@ -85,19 +94,28 @@ Two crates in one Cargo workspace:
   - **session:** `read_session` / `write_session` (open tabs, cached in `.ido/session.toml`).
   - **window:** `apply_window` / `show_window` / `win_minimize` / `win_toggle_maximize` / `win_close`.
   - **external:** `open_external` (open a URL in the OS browser).
+  - **mcp:** `mcp_info` — the resolved sidecar path + copy-paste client config (`.mcp.json` +
+    `claude mcp add` snippets) for the settings modal's "agent access" section.
 
   The folder picker uses `tauri-plugin-dialog` **from Rust** (no capability entry needed); recent
   wells live in `<app_data_dir>/wells.json`. Window chrome is custom (decorations off).
   `withGlobalTauri` is on.
 
-Both crates are split into small, documented modules (module-level `//!` + item `///` docs):
-- **Backend** (`src-tauri/src/`): `lib` wires modules + `run()`; `model` (shapes), `paths` (pure
+Every package is split into small, documented modules (module-level `//!` + item `///` docs):
+- **Store** (`crates/ido-store/src/`): `lib` wires modules; `model` (shapes), `paths` (pure
   id/name/**slug** helpers + tests), `frontmatter` (minimal `--- key: value ---` parse/merge +
-  tests), `registry` (recent wells), `wells` (open/create/**migrate** + scaffold), `notes` (tree +
-  CRUD + tests), `wiki` (flat pages + **cross-section** backlinks + tests), `tasks` (kanban + goals
-  over frontmatter + tests), `repeat` (pure recurrence-spec parse + `advance` date math on
-  chrono's `NaiveDate` + tests), `assets` (the shared image-attachment store + tests), `search`
-  (cross-section scan + tests), `session`, `window`, `external`.
+  tests), `wells` (open/create/**migrate** + scaffold + `well.toml` settings + tests), `notes`
+  (tree + CRUD + tests), `wiki` (flat pages + **cross-section** backlinks + tests), `tasks`
+  (kanban + goals over frontmatter + tests), `repeat` (pure recurrence-spec parse + `advance`
+  date math on chrono's `NaiveDate` + tests), `assets` (the shared image-attachment store +
+  tests), `search` (cross-section scan + tests), `session`.
+- **Tauri backend** (`src-tauri/src/`): `lib` wires the handlers + `run()`; `commands` (the
+  one-line wrapper wall), `registry` (recent wells, `wells.json`), `window` (custom-chrome
+  window control), `external` (OS browser), `mcp` (sidecar resolver + client-config snippets).
+- **MCP server** (`crates/ido-mcp/src/`): `main` (arg parsing + well resolution + stdio serve),
+  `server` (the rmcp handler: fixed tool order, descriptions, instructions), `tools` (the seven
+  read-only tool bodies over `ido_store`), `render` (markdown responses: bounds, paging, content
+  delimiters).
 - **Frontend** (`src/`): `model`, `ipc` (**the only place that calls `invoke`** — typed wrappers +
   arg structs), `state` (one `Copy` `State` of all signals via Leptos context; backend work lives in
   its action methods. Editing state lives on a `Pane` — `panes: [Pane; 2]` for split view — and the
@@ -146,17 +164,20 @@ The `/latent-design` Claude skill surfaces these (symlinked at `.claude/skills/l
 ## Commands
 
 ```sh
-just verify        # fmt-check + clippy (-D warnings) + backend tests — exactly what CI runs
+just verify        # fmt-check + clippy (-D warnings) + all tests — exactly what CI runs
 just fmt           # cargo fmt + leptosfmt (the only correct way to format — see below)
 just check         # cargo clippy --workspace -- -D warnings
-just test          # cargo test -p ido — backend store logic tests
-just dev           # cargo tauri dev: Trunk on :1420 + native window, hot reload
+just test          # cargo test -p ido-store, -p ido, -p ido-mcp (three suites)
+just mcp           # run ido-mcp against the most recent well
+just mcp-inspect   # run ido-mcp under the MCP inspector for protocol-level debugging
+just sidecar       # build release ido-mcp and stage as Tauri sidecar binary
+just dev           # cargo tauri dev: Trunk on :1420 + native window, hot reload (builds sidecar first)
 just dev-debug     # same, + WebView2 CDP remote debugging on :9222 (Windows only —
                    # see `.claude/skills/run` for the driver script: screenshots, DOM
                    # queries, real clicks/keystrokes against the running app)
 just               # list all recipes
 
-cargo tauri build                          # bundle a release binary for this platform
+cargo tauri build                          # bundle a release binary (requires `just sidecar` first)
 cargo tauri icon src-tauri/app-icon.svg    # regenerate the app-icon set from the source SVG
 cargo check -p ido-ui                      # fast type-check of just the frontend (host target is fine)
 ```
@@ -167,16 +188,21 @@ cargo check -p ido-ui                      # fast type-check of just the fronten
 - `.githooks/pre-commit` runs `just fmt-check`; activate once per clone with
   `git config core.hooksPath .githooks`. CI (`.github/workflows/ci.yml`) runs `just verify` on
   Ubuntu with Tauri's webkit deps installed.
-- **Tests:** two suites; only the backend one is in `just verify`.
-  - **Backend** (`cargo test -p ido` / `just test`): tempdir-based unit tests across `paths`,
+- **Tests:** three suites, all in `just verify`.
+  - **Store** (`cargo test -p ido-store` / 81 tests): tempdir-based unit tests across `paths`,
     `frontmatter`, `notes`, `wiki` (incl. cross-section backlinks), `tasks` (+ goals), `search`,
-    `wells` migration, `session`. Commands take plain args (no mock runtime). `just verify` includes these.
+    `wells` migration, `session` — the real suite. Store fns take plain args (no mock runtime).
+  - **App** (`cargo test -p ido` / 2 tests): the `mcp_info` command's snippet building
+    (JSON escaping of Windows paths, well round-trip).
+  - **MCP** (`cargo test -p ido-mcp` / 14 tests): 12 unit + 2 integration — an rmcp client spawns
+    the real binary and drives it over stdio against a tempdir well, and one test snapshots the
+    well before/after a session to prove the server never writes.
   - **Frontend** (`cargo test -p ido-ui`): pure-Rust unit tests in `src/blocks.rs` (segmentation /
     splice), `src/markdown.rs` (slugify + wikilink expansion), `src/dates.rs` (the shared date
     math), `components/tasks/logic.rs` (due/sort/overdue/tag helpers), `components/tasks/calendar.rs`
     (month-grid + chip-visibility invariants), `components/tasks/table.rs` (column comparators),
     and `components/datepicker.rs` (due-time split/combine/normalize) — run on the host target
-    (no WASM). Run them explicitly; `just verify` does not include them yet.
+    (no WASM). Run explicitly: `cargo test -p ido-ui`.
   - No E2E tests yet — verify UI changes by running the app (`just dev`).
 
 ## Rules that are easy to violate
@@ -431,13 +457,23 @@ re-renders. `workspace.rs` also installs a global `dragover`/`drop` fallback tha
 `prevent_default`s, so a file dropped anywhere other than an editor (or a non-image file dropped
 anywhere) doesn't navigate the webview instead of being silently ignored.
 
-**What's next** — the tasks P0/P1/P2 batches have **all landed** (a Notion import script was
-considered and dropped), and the wiki grew **organisational folders** (slugs stay globally unique,
-links stay folder-agnostic). The next big bet is the **MCP server + semantic search** over the
-store, specced end-to-end in [docs/mcp-server.md](docs/mcp-server.md): extract the store into a
-tauri-free `ido-store` crate, add an `rmcp` + stdio `ido-mcp` binary with seven read-only tools,
-then a local-embedding brute-force vector index (**candle** — pure Rust, no ONNX Runtime to
-bundle) fused with the existing lexical scan.
+**MCP** — the well is readable by any MCP client via `crates/ido-mcp`: seven read-only tools
+(`well_info` / `search` / `get_entry` / `list_entries` / `backlinks` / `list_tasks` /
+`list_goals`), keyword search only until P2, one well per process (`--well` flag → `IDO_WELL`
+env → most-recent registry entry). Ids round-trip between tools, bodies are delimited and framed
+as data-not-instructions, path-traversal ids are rejected, and responses are bounded with
+explicit paging. The binary ships inside the app as a **Tauri sidecar** (`bundle.externalBin`;
+staged by `just sidecar`, which `dev`/`dev-debug` run automatically), and the settings modal's
+**"agent access — mcp"** section (`mcp_info`) shows the resolved binary path + copyable
+`.mcp.json` / `claude mcp add` snippets. This repo's own `.mcp.json` registers the dev server
+for Claude Code. Deferred by design: resources, prompts, writes, and the `mode` search param
+(see [docs/mcp-server.md](docs/mcp-server.md)).
+
+**What's next** — MCP P0 (store extraction) + P1 (read-only server) + the non-semantic P3 slice
+(sidecar + settings surface) have landed; the next step is **P2 — the semantic index**
+([docs/mcp-server.md](docs/mcp-server.md)): candle embeddings, hybrid RRF fusion, `mode` on
+`search`, the eval harness — then the rest of P3 (model download UI, in-app semantic search)
+and P4 (gated writes, resources/prompts).
 Also open: the calendar's remaining phases (ICS export, read-only external feeds), small rough
 edges (N-way / persisted split, deeper goal-status surfacing), and the other bigger bets, none
 started: **local-LLM / Gemma** in-app assistance (on-device, private) and **web sync**

@@ -219,6 +219,20 @@ async fn main() -> anyhow::Result<()> {
 Keep the tool *bodies* in `ido-store` and the `rmcp` layer thin regardless — the SDK is young and
 the spec moves; a thin seam makes an SDK bump a one-file change.
 
+**As-built corrections (2026-08-21)**
+
+Verified during implementation against rmcp 3.1.4:
+- `serve()` comes from `rmcp::ServiceExt` and takes the handler value (not a Result): `Ido::open(&well).serve(stdio()).await?.waiting().await?`.
+- `Parameters` lives at `rmcp::handler::server::wrapper::Parameters` (not re-exported at the crate root).
+- `#[tool_router(server_handler)]` works but forwards no `instructions`; the two-macro form is needed for a real instructions block: `#[tool_router]` on the inherent impl + `#[tool_handler(router = self.tool_router)]` on a hand-written `impl ServerHandler` with `get_info`.
+- `ToolRouter::list_all()` sorts tools alphabetically — fixed tool order requires hand-implementing `list_tools` with a `TOOL_ORDER` const.
+- Tool errors: returning `Result<String, String>` maps `Err` to a `CallToolResult` with `isError: true`.
+- `rmcp` re-exports `schemars` (`use rmcp::schemars`).
+- `#[tool(annotations(read_only_hint = true, open_world_hint = false))]` is available and used on every tool.
+- Measured dep cost: rmcp added 11 crates to this workspace (not 3 as originally estimated).
+
+See `crates/ido-mcp/src/server.rs` for the reference implementation.
+
 `tokio` is already a `src-tauri` dependency (`features = ["sync"]`); `ido-mcp` needs
 `features = ["rt-multi-thread", "macros", "io-std"]`.
 
@@ -688,18 +702,19 @@ Without an eval, "semantic search" is vibes. Build the smallest useful harness:
 
 Each phase is independently shippable and independently useful.
 
-### P0 — Extract `ido-store` *(no new features)*
+### P0 — Extract `ido-store` *(no new features)* — **DONE 2026-08-21**
 
 Move the pure modules out of `src-tauri`; `src-tauri` becomes command wrappers. Frontend untouched.
 **Done when:** every existing backend test passes unmoved, `just verify` is green, and the app
 behaves identically.
 
-### P1 — Read-only MCP server, keyword search
+### P1 — Read-only MCP server, keyword search — **DONE 2026-08-21**
 
 `crates/ido-mcp` with rmcp + stdio and the seven tools of §5.2, `search` backed by the existing
 lexical scan. Registered in `.mcp.json`, driven from Claude Code against a real well.
 **Done when:** an agent can answer "what's on my board and what did I write about X" without ido
-running; tool results stay under budget on a large well; a `just mcp` recipe runs it.
+running; tool results stay under budget on a large well; a `just mcp` recipe runs it. Resources
+(§5.3) ship in P4; `search` omits the `mode` parameter until P2 adds semantic support.
 
 ### P2 — Semantic index
 
@@ -719,6 +734,8 @@ whole reason this phase is small. Settings pane: enable
 the server, copy the `.mcp.json` snippet, show/trigger the model download, show index status. Reuse
 the same index for **in-app semantic search** in the `Ctrl+K` palette — same code, second consumer,
 and the honest test of whether retrieval is actually good.
+
+The non-semantic slice (sidecar bundling + the settings-pane config surface) shipped 2026-08-21 alongside P1; the semantic parts (model download UI, index status, in-app semantic search) remain.
 
 ### P4 — Writes (gated) + polish
 
@@ -811,14 +828,15 @@ numbers before committing; they will drift.
 
 | | Net-new crates |
 |---|---|
-| `rmcp` 3.1 (`server`, `macros`, `transport-io`, `schemars`) | **3** |
+| `rmcp` 3.1 (`server`, `macros`, `transport-io`, `schemars`) | **11** (measured in this workspace, not 3) |
 | candle stack (`candle-core` + `candle-nn` + `candle-transformers` + `tokenizers` + `ureq`) | **79** |
 | **Total** | **82** → ~583 crates in the workspace |
 
-**rmcp is nearly free, and that is the most important line in this table.** Three crates —
-`rmcp`, `rmcp-macros`, `tokio-macros` — because Tauri already drags in tokio, serde, serde_json,
-schemars, futures, hyper, tracing and anyhow. The entire MCP protocol layer is a rounding error on
-a tree this size.
+**rmcp is nearly free, and that is the most important line in this table.** The original estimate
+was three crates — `rmcp`, `rmcp-macros`, `tokio-macros` — because Tauri already drags in tokio,
+serde, serde_json, schemars, futures, hyper, tracing and anyhow; as built it measured 11, the
+extras being the schemars-1 derive + `darling` macro stack and the dev-only client/child-process
+transport the integration test uses. Either number is a rounding error on a tree this size.
 
 **All the weight is semantic search.** Which is exactly why the `semantic` cargo feature from §6.3
 is load-bearing rather than cosmetic: with it off, `ido-mcp` costs 3 crates; with it on, 82.
@@ -933,16 +951,22 @@ copy-pastable snippet pointing at it, since the binary is not on `PATH`.
 
 ## Appendix B — commands this adds
 
+### Exist (P0 + P1 + P3 slice)
 ```sh
 just mcp                    # run ido-mcp against the most recent well, stderr to terminal
 just mcp-inspect            # run under the MCP inspector for protocol-level debugging
-cargo test -p ido-store     # the real store test suite (moved from -p ido)
-cargo run -p ido-mcp -- --well <path> --reindex   # force a full index rebuild
-cargo run -p ido-mcp -- --eval  docs/eval.jsonl   # retrieval eval: recall@5 / MRR
+just sidecar                # build release ido-mcp and stage as Tauri sidecar binary
+cargo test -p ido-store     # the real store test suite (81 tests, moved from -p ido)
+cargo test -p ido-mcp       # unit + stdio integration tests (14 tests)
 ```
 
-`just verify` gains `cargo test -p ido-store` and `cargo test -p ido-mcp`; clippy already runs
-`--workspace`.
+### Still future (P2, P4)
+```sh
+cargo run -p ido-mcp -- --well <path> --reindex   # force a full index rebuild (P2)
+cargo run -p ido-mcp -- --eval  docs/eval.jsonl   # retrieval eval: recall@5 / MRR (P2)
+```
+
+`just verify` includes `cargo test -p ido-store`, `cargo test -p ido` (2), and `cargo test -p ido-mcp`; `just dev`/`dev-debug` depend on `sidecar`; `cargo tauri build` requires `just sidecar` run first.
 
 ## Appendix C — references
 

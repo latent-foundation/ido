@@ -9,7 +9,11 @@ use std::path::{Path, PathBuf};
 use crate::model::{Section, WellRef};
 
 /// Build a [`WellRef`] from an absolute well path (name = the folder's own name).
-pub(crate) fn well_ref(path: &str) -> WellRef {
+///
+/// `pub` (not `pub(crate)`, unlike its neighbours here): `src-tauri`'s
+/// `registry` module builds a `WellRef` for each recent well and needs this
+/// across the crate boundary.
+pub fn well_ref(path: &str) -> WellRef {
     let name = Path::new(path)
         .file_name()
         .and_then(|s| s.to_str())

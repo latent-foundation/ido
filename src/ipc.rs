@@ -14,7 +14,7 @@ use serde::de::DeserializeOwned;
 use wasm_bindgen::prelude::*;
 
 use crate::model::{
-    Goal, LinkRef, NoteMeta, SavedView, SearchHit, Session, Task, TreeNode, WellRef,
+    Goal, LinkRef, McpInfo, NoteMeta, SavedView, SearchHit, Session, Task, TreeNode, WellRef,
 };
 
 #[wasm_bindgen]
@@ -675,6 +675,15 @@ struct AssetArg {
 /// URI for inline rendering.
 pub async fn read_asset(well: String, id: String) -> Option<String> {
     deser(call("read_asset", &AssetArg { well, id }).await)
+}
+
+// --- mcp ---------------------------------------------------------------------
+
+/// Resolve the bundled `ido-mcp` sidecar for `well` and build copy-paste MCP
+/// client config (a `.mcp.json` snippet + a `claude mcp add` one-liner);
+/// `None` on error.
+pub async fn mcp_info(well: String) -> Option<McpInfo> {
+    deser(call("mcp_info", &WellArg { well }).await)
 }
 
 // --- window ----------------------------------------------------------------

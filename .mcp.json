@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ido": {
+      "command": "cargo",
+      "args": ["run", "-q", "-p", "ido-mcp"]
+    }
+  }
+}

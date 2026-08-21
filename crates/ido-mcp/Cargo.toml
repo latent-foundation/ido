@@ -1,0 +1,39 @@
+[package]
+name = "ido-mcp"
+version = "1.0.0"
+edition = "2024"
+
+# The MCP server binary: a well, read-only, over stdio. See
+# ../../docs/mcp-server.md (P1) for the design.
+
+[dependencies]
+# The store — every disk read goes through it, so there is never a second,
+# drifting copy of "how a task file is parsed".
+ido-store = { path = "../ido-store" }
+# The official Rust MCP SDK. `transport-io` is the stdio server transport;
+# `schemars` turns the tool param structs into JSON Schema.
+rmcp = { version = "3.1", features = [
+    "server",
+    "macros",
+    "transport-io",
+    "schemars",
+] }
+# rmcp is async; stdio needs `io-std` and `#[tokio::main]` needs `macros`.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Locating `<app_data_dir>/latent.ido/wells.json` — the recent-wells registry
+# the launcher keeps — for the `--well` fallback (see `main::resolve_well`).
+dirs = "6"
+# Rendering a file mtime as a local `YYYY-MM-DD`. Same version the store
+# already uses for `completed:` stamps, so this adds no crate to the workspace.
+chrono = "0.4"
+
+[dev-dependencies]
+# The integration test drives the built binary as a real MCP server: rmcp's
+# client half plus the child-process (stdio) transport.
+rmcp = { version = "3.1", features = ["client", "transport-child-process"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process"] }
+# Seeding a throwaway well through the same store the server reads.
+tempfile = "3"
