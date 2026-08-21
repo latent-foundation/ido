@@ -1,0 +1,137 @@
+name: Release
+
+# A release is deliberate: only a version tag triggers it.
+#
+#   git tag v1.0.0 && git push origin v1.0.0
+#
+# Windows only for now. Builds are **unsigned** — see the release notes below and
+# the README. Signing slots in between `build` and `Checksums` later. Note it has
+# to be a two-pass build — `tauri build --no-bundle` → sign the exe →
+# `tauri bundle` → sign the installer — because signing only after bundling
+# leaves the exe inside the installer unsigned.
+on:
+  push:
+    tags: ["v*"]
+
+# Creating the release and uploading assets to it.
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive # vendor/latent-design — without it the app builds unstyled
+
+      # The tag is the release contract. Refuse to build if it disagrees with the
+      # version Tauri will stamp on the installer — `tauri.conf.json` omits
+      # `version`, so `src-tauri/Cargo.toml` is the single source of truth. Runs
+      # before the toolchain install so a typo'd tag fails in seconds, not minutes.
+      - name: Verify tag matches crate version
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $tag = $env:TAG -replace '^v', ''
+          $match = Select-String -Path src-tauri/Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1
+          $crate = $match.Matches[0].Groups[1].Value
+          if ($tag -ne $crate) {
+            throw "tag $env:TAG does not match src-tauri/Cargo.toml version $crate — bump one of them"
+          }
+          "VERSION=$crate" >> $env:GITHUB_ENV
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      # `beforeBuildCommand` is `trunk build`, and the bundle is driven by the
+      # Tauri CLI — neither ships on the runner. Slow on a cold cache (~10 min),
+      # near-free afterwards since rust-cache restores ~/.cargo/bin.
+      - name: Install trunk + tauri-cli
+        run: cargo install trunk tauri-cli --locked
+
+      # CI only runs on main and PRs, so a tag can point at a commit that never
+      # passed it. `--locked` also fails loudly if Cargo.lock is stale, which
+      # would mean the tag doesn't pin the dependency graph it claims to.
+      - name: Test
+        run: cargo test -p ido --locked
+
+      # NSIS only: `ido_<version>_x64-setup.exe` is the normal user path. Add
+      # `msi` to --bundles if enterprise/GPO deployment ever needs it.
+      #
+      # The bundle dir is wiped first because rust-cache restores `target/`
+      # between runs and Tauri never prunes it — without this, last release's
+      # installer survives and gets published alongside this one.
+      - name: Build installer
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force target/release/bundle -ErrorAction Ignore
+          cargo tauri build --bundles nsis
+
+      # Named exactly, not globbed: if Tauri's output name ever drifts from the
+      # crate version, fail here rather than publish a mislabelled installer.
+      # `<hash>  <name>`, two spaces, no BOM — so `sha256sum -c` accepts it too.
+      - name: Checksums
+        shell: pwsh
+        run: |
+          $dir = 'target/release/bundle/nsis'
+          $setup = Join-Path $dir "ido_$($env:VERSION)_x64-setup.exe"
+          if (-not (Test-Path $setup)) {
+            Get-ChildItem $dir | ForEach-Object { Write-Host "found: $($_.Name)" }
+            throw "expected $setup — Tauri did not stamp the crate version onto the installer"
+          }
+          $item = Get-Item $setup
+          '{0}  {1}' -f (Get-FileHash $item -Algorithm SHA256).Hash.ToLower(), $item.Name |
+            Out-File "$dir/SHA256SUMS" -Encoding ascii
+          "SETUP=$($item.FullName)" >> $env:GITHUB_ENV
+
+      # Draft first, attach everything, publish last — a run that dies halfway
+      # leaves an unpublished draft rather than a half-built public release.
+      - name: Publish release
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @(
+            '### Unsigned build'
+            ''
+            'This release is **not code signed**. Windows SmartScreen will show'
+            '"Windows protected your PC" the first time you run the installer —'
+            'click **More info**, then **Run anyway**.'
+            ''
+            'Verify your download against `SHA256SUMS` below before running it:'
+            ''
+            '```powershell'
+            "Get-FileHash .\ido_${env:VERSION}_x64-setup.exe -Algorithm SHA256"
+            '```'
+            ''
+            'If you would rather not trust an unsigned binary, build it yourself'
+            'from this tag — it is the same source, and this installer was built'
+            'from it by GitHub Actions.'
+            ''
+            'Code signing is planned but not yet in place.'
+            ''
+            '---'
+          ) -join "`n"
+
+          $ghArgs = @(
+            $env:TAG
+            '--draft'
+            '--title', "ido $env:VERSION"
+            '--notes', $notes
+            '--generate-notes'
+          )
+          # A semver pre-release suffix (v1.0.0-rc.1) marks a GitHub pre-release.
+          if ($env:TAG -match '-') { $ghArgs += '--prerelease' }
+
+          gh release create @ghArgs
+
+          # $SETUP is the exact installer verified in the Checksums step.
+          gh release upload $env:TAG $env:SETUP 'target/release/bundle/nsis/SHA256SUMS'
+
+          gh release edit $env:TAG --draft=false

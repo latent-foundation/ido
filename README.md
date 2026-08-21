@@ -40,6 +40,29 @@ reopen a well. **Split** the editor into two panes side by side (drag a tab acro
 and **search** across all three sections with `Ctrl+K`. Right-click any entry for its actions.
 Bigger bets still ahead: an MCP server over the store, on-device AI, and optional sync.
 
+## Install
+
+**Windows** — download `ido_<version>_x64-setup.exe` from the
+[latest release](https://github.com/latent-foundation/ido/releases/latest) and run it.
+Releases are built from the tag by
+[GitHub Actions](.github/workflows/release.yml).
+
+> [!WARNING]
+> **The installer is not code signed yet.** Windows SmartScreen will show
+> "Windows protected your PC" the first time you run it — click **More info**, then
+> **Run anyway**.
+>
+> Every release publishes a `SHA256SUMS` file. Verify your download before running it:
+>
+> ```powershell
+> Get-FileHash .\ido_1.0.0_x64-setup.exe -Algorithm SHA256
+> ```
+>
+> If you would rather not trust an unsigned binary, build from source below — it is
+> the same code. Code signing is planned, but not yet in place.
+
+macOS and Linux builds aren't published yet; both build from source.
+
 ## Develop
 
 Prerequisites: the Rust toolchain with the `wasm32-unknown-unknown` target, plus
