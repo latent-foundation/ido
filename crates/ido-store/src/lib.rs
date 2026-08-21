@@ -25,11 +25,14 @@
 //! - [`repeat`] — pure recurrence math for a task's `repeat:` rule (unit-tested)
 //! - [`assets`] — the shared `assets/` image-attachment store (unit-tested)
 //! - [`search`] — cross-section full-text scan (unit-tested)
+//! - [`index`] — the semantic index: chunking, embedding, vectors, fusion
+//!   (the candle embedder itself sits behind the `semantic` cargo feature)
 //! - [`frontmatter`] — the minimal `--- key: value ---` parser (unit-tested)
 //! - [`session`] — the per-well open-tabs session (`.ido/session.toml`)
 
 pub mod assets;
 pub mod frontmatter;
+pub mod index;
 pub mod model;
 pub mod notes;
 pub mod paths;

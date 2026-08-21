@@ -6,6 +6,12 @@ edition = "2024"
 # The MCP server binary: a well, read-only, over stdio. See
 # ../../docs/mcp-server.md (P1) for the design.
 
+[features]
+# Semantic + hybrid search (P2): forwards the store's feature, pulling in the
+# candle embedding stack. Off by default so the default build stays a 3-crate
+# add; the shipped sidecar builds with it on.
+semantic = ["ido-store/semantic"]
+
 [dependencies]
 # The store — every disk read goes through it, so there is never a second,
 # drifting copy of "how a task file is parsed".

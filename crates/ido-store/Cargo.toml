@@ -5,8 +5,27 @@ edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+# The candle embedding stack for the semantic index (docs/mcp-server.md §6).
+# Off by default so `src-tauri`, `just verify`, and CI never compile the
+# ~80-crate candle tree; everything in `index/` except the embedder itself
+# (chunking, vector storage, fusion) compiles and tests without it.
+semantic = [
+    "dep:candle-core",
+    "dep:candle-nn",
+    "dep:candle-transformers",
+    "dep:tokenizers",
+    "dep:ureq",
+    "dep:dirs",
+]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+# The semantic index's on-disk metadata: `manifest.json` + `chunks.jsonl`.
+serde_json = "1"
+# Per-file content hashes in the index manifest (change detection) and the
+# model download's integrity check.
+sha2 = "0.10"
 # `.ido/well.toml` well manifest (read/write).
 toml = "1.1.2"
 # Encoding image bytes as `data:` URIs for inline rendering (see `assets`).
@@ -17,6 +36,24 @@ chrono = "0.4"
 # events rather than line scanning, so fenced-code `- [ ]` is never counted —
 # same version as the frontend (`Cargo.toml`), no HTML rendering needed here.
 pulldown-cmark = { version = "0.13", default-features = false }
+
+# --- `semantic` feature only: the candle embedding stack (§6.3) -------------
+# Candle ships no native runtime artifact — everything compiles into the
+# binary, which is the whole reason it was chosen over ONNX Runtime.
+candle-core = { version = "0.11", optional = true }
+candle-nn = { version = "0.11", optional = true }
+candle-transformers = { version = "0.11", optional = true }
+# `default-features = false` keeps progressbar/esaxx off; candle-core forces
+# `onig` back on regardless (see the §11.2 audit) — that's expected.
+tokenizers = { version = "0.22", default-features = false, features = [
+    "onig",
+], optional = true }
+# Model download only — the single network event in the system's life (§9).
+ureq = { version = "3", features = ["rustls"], optional = true }
+# The per-machine model cache lives beside the recent-wells registry at
+# `<data_dir>/latent.ido/models/` — models are shared across wells, unlike
+# the per-well rebuildable `.ido/index/`.
+dirs = { version = "6", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
