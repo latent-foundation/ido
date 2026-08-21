@@ -56,7 +56,7 @@ Releases are built from the tag by
 > Every release publishes a `SHA256SUMS` file. Verify your download before running it:
 >
 > ```powershell
-> Get-FileHash .\ido_1.0.0_x64-setup.exe -Algorithm SHA256
+> Get-FileHash .\ido_<version>_x64-setup.exe -Algorithm SHA256
 > ```
 >
 > If you would rather not trust an unsigned binary, build from source below — it is
@@ -99,6 +99,7 @@ for the full setup.
 
 ```sh
 git submodule update --init --recursive   # populate vendor/latent-design (styling + canon)
+cp .mcp.json.example .mcp.json             # optional: dev MCP servers — edit the well paths
 just dev                                   # run the desktop app, hot reload
 just verify                                # format check + lint — exactly what CI runs
 ```

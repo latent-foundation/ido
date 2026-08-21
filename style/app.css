@@ -3325,7 +3325,7 @@ select.ido-drawer-input {
 
 .ido-modal {
   width: 100%;
-  max-width: 360px;
+  max-width: 480px;
   max-height: 84vh;
   padding: var(--space-5);
   overflow-y: auto;

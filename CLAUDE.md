@@ -465,8 +465,28 @@ as data-not-instructions, path-traversal ids are rejected, and responses are bou
 explicit paging. The binary ships inside the app as a **Tauri sidecar** (`bundle.externalBin`;
 staged by `just sidecar`, which `dev`/`dev-debug` run automatically), and the settings modal's
 **"agent access — mcp"** section (`mcp_info`) shows the resolved binary path + copyable
-`.mcp.json` / `claude mcp add` snippets. This repo's own `.mcp.json` registers the dev server
-for Claude Code. Deferred by design: resources, prompts, writes, and the `mode` search param
+`.mcp.json` / `claude mcp add` snippets (server name `ido`, one registration per well — a
+second well needs a distinct name, since ids carry no well and the server name is the client's
+only disambiguator).
+
+**`.mcp.json` is gitignored** — it names *this* machine's well folders, so it can't be shared.
+[.mcp.json.example](.mcp.json.example) is the committed template: copy it to `.mcp.json` after
+cloning and fix up the paths. It registers **two dev servers, both with `--well` pinned
+explicitly** — never via the registry fallback, which would silently re-point them at whatever
+well was last opened in the app:
+- **`ido-dev`** → [dev-well/](dev-well/), a committed fixture well built to exercise all seven
+  tools (notes in folders, linked wiki pages incl. a dead `[[link]]`, tasks across every column
+  plus a backlog / orphan-status / archived one, recurring + checklist tasks, dated and archived
+  goals). Scratch data — edit it freely to reproduce a bug.
+- **`ido-docs`** → the project's own docs well, read-only dogfooding. The only genuinely
+  machine-specific entry (an absolute path); the template ships a placeholder.
+
+Neither is named `ido`, so they can't shadow a user-scoped `ido` registration for a real well,
+and the tool namespace (`mcp__ido-dev__…`) names which well answered. Both set
+`CARGO_TARGET_DIR=target/mcp-dev` so a client spawning them never blocks on the build-directory
+lock held by `just dev` or `just verify`.
+
+Deferred by design: resources, prompts, writes, and the `mode` search param
 (see [docs/mcp-server.md](docs/mcp-server.md)).
 
 **What's next** — MCP P0 (store extraction) + P1 (read-only server) + the non-semantic P3 slice

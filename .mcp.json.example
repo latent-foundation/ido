@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "ido-dev": {
+      "command": "cargo",
+      "args": ["run", "-q", "-p", "ido-mcp", "--", "--well", "dev-well"],
+      "env": { "CARGO_TARGET_DIR": "target/mcp-dev" }
+    },
+    "ido-docs": {
+      "command": "cargo",
+      "args": [
+        "run",
+        "-q",
+        "-p",
+        "ido-mcp",
+        "--",
+        "--well",
+        "/absolute/path/to/your/docs/well"
+      ],
+      "env": { "CARGO_TARGET_DIR": "target/mcp-dev" }
+    }
+  }
+}

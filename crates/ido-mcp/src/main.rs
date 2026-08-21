@@ -93,7 +93,14 @@ fn most_recent_well() -> Option<PathBuf> {
 /// Which well to serve: the flag, then `IDO_WELL`, then the registry
 /// (`docs/mcp-server.md` §3.4). The result is checked to be a real folder here
 /// so the failure is a clear startup message rather than seven empty tools.
-fn resolve_well(flag: Option<PathBuf>) -> Result<PathBuf, String> {
+///
+/// Returns the resolution *source* alongside the path. It costs one word in
+/// the startup banner and answers the question that actually bites when more
+/// than one server is registered — "which well is this one on, and did I pin
+/// it or did the registry pick for me?". A client tags every stderr line as an
+/// error (§9: stderr is the only channel — the spec's logging capability is
+/// deprecated), so each line has to earn its place.
+fn resolve_well(flag: Option<PathBuf>) -> Result<(PathBuf, &'static str), String> {
     let env_well = std::env::var("IDO_WELL")
         .ok()
         .map(|v| v.trim().to_string())
@@ -117,7 +124,7 @@ fn resolve_well(flag: Option<PathBuf>) -> Result<PathBuf, String> {
             well.display()
         ));
     }
-    Ok(well)
+    Ok((well, source))
 }
 
 /// Warn — on stderr, without refusing to serve — when the folder has no
@@ -143,8 +150,8 @@ async fn main() -> anyhow::Result<()> {
             std::process::exit(EXIT_USAGE);
         }
     };
-    let well = match resolve_well(flag) {
-        Ok(well) => well,
+    let (well, source) = match resolve_well(flag) {
+        Ok(resolved) => resolved,
         Err(message) => {
             eprintln!("ido-mcp: {message}");
             std::process::exit(EXIT_USAGE);
@@ -152,7 +159,7 @@ async fn main() -> anyhow::Result<()> {
     };
     warn_if_unscaffolded(&well);
     eprintln!(
-        "ido-mcp {} — serving `{}` read-only over stdio (keyword search)",
+        "ido-mcp {} — serving `{}` (from {source}) read-only over stdio (keyword search)",
         env!("CARGO_PKG_VERSION"),
         well.display()
     );

@@ -31,4 +31,17 @@ target
 # built per-machine per-target-triple, never committed.
 /src-tauri/binaries/
 
+# `dev-well/` itself IS committed: it's the fixture the `ido-dev` MCP server in
+# .mcp.json.example is pinned to, so a clone that didn't have it would fail to
+# start that server. Only the rebuildable per-machine cache is ignored — written
+# if the fixture is ever opened in the app, and pure churn in a diff.
+/dev-well/.ido/session.toml
+/dev-well/assets/
+
 .claude
+
+# MCP client config: machine-local, never committed. `ido-dev` is portable
+# (relative `dev-well/`) but `ido-docs` points at whatever folder *this* developer
+# keeps their docs well in, so the whole file is per-machine. Copy
+# `.mcp.json.example` to `.mcp.json` after cloning and fix up the paths.
+/.mcp.json

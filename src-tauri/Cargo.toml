@@ -3,7 +3,7 @@ name = "ido"
 # The single source of truth for the app version: `tauri.conf.json` deliberately
 # omits `version`, so Tauri derives the bundle/installer version from here.
 # A release tag `vX.Y.Z` must match this.
-version = "1.0.0"
+version = "1.1.0"
 description = "ido is a minimalistic productivity tool for managing tasks and projects, with notes and wikis."
 authors = ["Maksymilian Neumann <neumann.maks@gmail.com>"]
 edition = "2024"

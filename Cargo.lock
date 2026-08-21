@@ -2015,7 +2015,7 @@ dependencies = [
 
 [[package]]
 name = "ido"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "ido-store",
  "serde",
@@ -2029,7 +2029,7 @@ dependencies = [
 
 [[package]]
 name = "ido-mcp"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2044,7 +2044,7 @@ dependencies = [
 
 [[package]]
 name = "ido-store"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -2056,7 +2056,7 @@ dependencies = [
 
 [[package]]
 name = "ido-ui"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
