@@ -15,7 +15,11 @@ use crate::paths::{
 
 /// Recursively read `dir` into [`TreeNode`]s (folders first, then notes, each
 /// alphabetical). Hidden entries (dot-prefixed) and non-`.md` files are skipped.
-fn build_tree(dir: &Path, well: &Path) -> Vec<TreeNode> {
+///
+/// `pub(crate)` because it's a generic "folders + `.md` files → tree" reader with
+/// no notes-specific logic — the wiki section reuses it for its own tree so the
+/// two stay in lockstep.
+pub(crate) fn build_tree(dir: &Path, well: &Path) -> Vec<TreeNode> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -54,6 +58,19 @@ fn build_tree(dir: &Path, well: &Path) -> Vec<TreeNode> {
     dirs.sort_by_key(|n| n.name.to_lowercase());
     files.sort_by_key(|n| n.name.to_lowercase());
     dirs.into_iter().chain(files).collect()
+}
+
+/// Whether `a` and `b` resolve to the **same** on-disk entry. On a
+/// case-insensitive filesystem (Windows/macOS default) a case-only rename like
+/// `Notes` → `notes` has `b.exists() == true` even though it's the very file
+/// being renamed; comparing canonical paths lets that recasing through instead
+/// of a false "name already taken". `pub(crate)`: the wiki section's folder
+/// rename/move reuses it for the same case-insensitive-FS guard.
+pub(crate) fn same_entry(a: &Path, b: &Path) -> bool {
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 /// The notes section's whole tree of folders and notes.
@@ -150,7 +167,8 @@ pub fn rename_entry(
             root.join(format!("{new_id}.md")),
         )
     };
-    if new.exists() {
+    // Allow a case-only recasing (same file on a case-insensitive FS) through.
+    if new.exists() && !same_entry(&old, &new) {
         return Err("name already taken".into());
     }
     fs::rename(old, new).map_err(|e| e.to_string())?;
@@ -163,7 +181,16 @@ pub fn rename_entry(
 pub fn delete_entry(well: String, id: String, is_dir: bool) -> Result<(), String> {
     let root = section_dir(&well, Section::Notes);
     if is_dir {
-        fs::remove_dir(root.join(&id)).map_err(|_| "folder isn't empty".to_string())
+        let path = root.join(&id);
+        // Report the real "not empty" case as such; surface any other I/O error
+        // (permissions, missing) verbatim rather than mislabelling it.
+        if fs::read_dir(&path)
+            .map(|mut e| e.next().is_some())
+            .unwrap_or(false)
+        {
+            return Err("folder isn't empty".into());
+        }
+        fs::remove_dir(path).map_err(|e| e.to_string())
     } else {
         fs::remove_file(root.join(format!("{id}.md"))).map_err(|e| e.to_string())
     }
@@ -190,7 +217,7 @@ pub fn move_entry(well: String, id: String, is_dir: bool, dest: String) -> Resul
             root.join(format!("{new_id}.md")),
         )
     };
-    if new.exists() {
+    if new.exists() && !same_entry(&old, &new) {
         return Err("an item with that name already exists there".into());
     }
     if let Some(parent) = new.parent() {
@@ -205,7 +232,7 @@ pub fn move_entry(well: String, id: String, is_dir: bool, dest: String) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::{tempdir, TempDir};
+    use tempfile::{TempDir, tempdir};
 
     /// A fresh empty well in a temp dir. Keep the `TempDir` alive for the test.
     fn well() -> (TempDir, String) {
@@ -282,6 +309,17 @@ mod tests {
         // renaming onto an existing name is rejected
         let other = create_note(w.clone(), String::new()).unwrap();
         assert!(rename_entry(w.clone(), other, false, "hello".into()).is_err());
+    }
+
+    #[test]
+    fn rename_recasing_is_allowed() {
+        let (_d, w) = well();
+        let id = create_note(w.clone(), String::new()).unwrap();
+        // Changing only the case must not be rejected as "name already taken"
+        // (on a case-insensitive filesystem the target path already "exists").
+        let new = rename_entry(w.clone(), id, false, "Untitled".into()).unwrap();
+        assert_eq!(new, "Untitled");
+        assert!(read_note(w, "Untitled".into()).is_ok());
     }
 
     #[test]

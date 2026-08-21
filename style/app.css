@@ -11,6 +11,22 @@ body {
   overflow: hidden; /* the two panes scroll internally, not the page */
 }
 
+/* Native controls (date pickers, select popups, scrollbars) follow the theme,
+   so the OS chrome never renders light-on-dark. `data-theme` is set on <html>. */
+[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+
+/* Native accents (the date-picker's selected day + Today/Clear links, etc.) use
+   our sand accent instead of the browser's blue. */
+[data-theme] {
+  accent-color: var(--color-accent);
+}
+
 /* shell: our own title bar on top, the app below it ===================== */
 .ido-shell {
   flex: 1 1 auto;
@@ -29,6 +45,68 @@ body {
   background: var(--color-bg);
   border-bottom: 1px solid var(--color-border-subtle);
   user-select: none;
+}
+
+/* macOS puts its controls on the left and centres the title. A 3-column grid
+   centres the name against the *window*, not against the leftover space, so it
+   stays put as the well name changes length. */
+.ido-titlebar.mac {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+}
+
+.ido-titlebar.mac .ido-title-well {
+  grid-column: 2;
+  padding-left: 0;
+  text-align: center;
+}
+
+/* Traffic-light-adjacent: macOS's placement and hover affordance, but latent's
+   palette instead of the system red/amber/green — outlines at rest, glyphs
+   revealed once the pointer is over the cluster. */
+.ido-mac-lights {
+  grid-column: 1;
+  justify-self: start;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 13px;
+}
+
+.ido-mac-dot {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 50%;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  cursor: default;
+  color: transparent; /* the glyph hides until the cluster is hovered */
+  transition: background var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+/* An 8px glyph needs a heavier stroke than the 1.6 icon default to read at all. */
+.ido-mac-dot .icon {
+  stroke-width: 3.2;
+}
+
+.ido-mac-lights:hover .ido-mac-dot:not(:disabled) {
+  color: var(--color-text-muted);
+}
+
+/* The dot actually under the cursor fills, so the target is unambiguous. */
+.ido-mac-dot:not(:disabled):hover {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-bg);
+}
+
+.ido-mac-dot:disabled {
+  opacity: 0.45;
 }
 
 /* The open well's name — quiet metadata, visible across every section. */
@@ -120,6 +198,7 @@ body {
 }
 
 .ido-rail-item {
+  position: relative;
   display: grid;
   place-items: center;
   width: 36px;
@@ -141,6 +220,24 @@ body {
 .ido-rail-item.active {
   background: var(--color-accent-soft);
   color: var(--color-text-primary);
+}
+
+/* overdue-count badge on the tasks rail button — small, accent, top-right */
+.ido-rail-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  color: var(--color-bg);
 }
 
 /* settings is the last child — float it to the bottom of the rail */
@@ -268,6 +365,20 @@ body {
   background: var(--color-bg);
 }
 
+/* split view: a divider between panes; the focused one carries a top accent */
+.ido-main + .ido-main {
+  border-left: 1px solid var(--color-border-subtle);
+}
+
+.ido-main.focused .ido-editor-head {
+  box-shadow: inset 0 2px 0 var(--color-accent);
+}
+
+/* the split button sits just past the mode toggle group */
+.ido-split-btn {
+  margin-left: 2px;
+}
+
 /* ============================================================ tab strip === */
 .ido-tabs {
   flex: none;
@@ -287,6 +398,7 @@ body {
 }
 
 .ido-tab {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -302,6 +414,24 @@ body {
     color var(--dur-fast) var(--ease-standard);
 }
 
+/* tab drop indicators — insertion line before a tab, or at the strip's end */
+.ido-tab.drop-before::before,
+.ido-tabs.drop-end::after {
+  content: "";
+  width: 2px;
+  align-self: center;
+  height: 20px;
+  border-radius: 1px;
+  background: var(--color-accent);
+}
+
+.ido-tab.drop-before::before {
+  position: absolute;
+  left: -1px;
+  top: 7px;
+  height: 20px;
+}
+
 .ido-tab:hover {
   background: var(--color-bg-subtle);
   color: var(--color-text-secondary);
@@ -315,6 +445,11 @@ body {
 
 .ido-tab.dragging {
   opacity: 0.5;
+}
+
+/* preview (transient) tab — italic name; reused until pinned by an edit. */
+.ido-tab.preview .ido-tab-name {
+  font-style: italic;
 }
 
 .ido-tab-icon {
@@ -532,9 +667,25 @@ body {
 }
 
 .ido-editor-body {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* drop a dragged tab here (right edge, while dragging, not yet split) to split */
+.ido-split-zone {
+  position: absolute;
+  inset: 0 0 0 55%;
+  z-index: 5;
+  border-left: 1px dashed var(--color-border-subtle);
+  background: transparent;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.ido-split-zone.over {
+  background: var(--color-accent-soft);
+  border-left-color: var(--color-accent);
 }
 
 .ido-editor {
@@ -695,9 +846,53 @@ body {
   color: var(--color-text-muted);
 }
 
-.markdown-body input[type="checkbox"] {
-  margin-right: 0.5em;
-  accent-color: var(--color-accent);
+/* Rendered task-list checkboxes (`- [ ] item`) — the same custom box as the
+   toolbar, sized for inline prose. Clickable: a click flips the `[ ]`/`[x]`
+   marker in the source (see markdown::toggle_checkbox). */
+.markdown-body input[type="checkbox"],
+.ido-block input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  margin: 0 0.45em 0 0;
+  vertical-align: -2px;
+  display: inline-grid;
+  place-content: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+/* A task item speaks through its checkbox — drop the redundant bullet.
+   (`> p >` covers loose lists, where the writer wraps items in paragraphs.) */
+.markdown-body li:has(> .ido-check),
+.markdown-body li:has(> p > .ido-check),
+.ido-block li:has(> .ido-check),
+.ido-block li:has(> p > .ido-check) {
+  list-style: none;
+}
+
+.markdown-body input[type="checkbox"]::before,
+.ido-block input[type="checkbox"]::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  transform: scale(0);
+  background: var(--color-bg);
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+}
+
+.markdown-body input[type="checkbox"]:checked,
+.ido-block input[type="checkbox"]:checked {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.markdown-body input[type="checkbox"]:checked::before,
+.ido-block input[type="checkbox"]:checked::before {
+  transform: scale(1);
 }
 
 .markdown-body blockquote {
@@ -950,11 +1145,8 @@ body {
   right: var(--space-4);
 }
 
-/* icons ================================================================= */
-.ido-icon {
-  flex: none;
-  display: block;
-}
+/* icons — base `.icon` rule lives in latent-design's components.css; only
+   ido-specific, ancestor-scoped tweaks belong here ====================== */
 
 /* sidebar toolbar ====================================================== */
 .ido-toolbar {
@@ -1110,6 +1302,2016 @@ body {
   color: var(--color-text-primary);
 }
 
+/* wiki page list ======================================================= */
+.ido-wiki-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 6px 0 10px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  transition: background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-wiki-row:hover {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+}
+
+.ido-wiki-row.active {
+  background: var(--color-surface-raised);
+  color: var(--color-text-primary);
+}
+
+.ido-wiki-row:hover .ido-tree-actions {
+  opacity: 1;
+}
+
+.ido-wiki-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ido-wiki-empty,
+.ido-section-stub {
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+}
+
+/* wikilinks — distinct from external links (dashed, not solid, underline) */
+.markdown-body a[href^="ido:wiki/"],
+.ido-block a[href^="ido:wiki/"] {
+  color: var(--color-accent);
+  border-bottom: 1px dashed var(--color-border-strong);
+}
+
+.markdown-body a[href^="ido:wiki/"]:hover,
+.ido-block a[href^="ido:wiki/"]:hover {
+  border-bottom-color: var(--color-accent);
+}
+
+/* backlinks (reading-view footer for a wiki page) */
+.ido-backlinks {
+  margin-top: 40px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.ido-backlinks-head {
+  margin-bottom: 8px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.ido-backlink {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 8px;
+  margin: 0 -8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  color: var(--color-accent);
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.ido-backlink:hover {
+  background: var(--color-bg-subtle);
+}
+
+.ido-backlink .icon {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+/* tasks board ========================================================== */
+.ido-board-wrap {
+  position: relative; /* the detail drawer anchors here */
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+  overflow: hidden;
+}
+
+/* board toolbar: search + sort + hide-done */
+.ido-board-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.ido-board-search {
+  width: 220px;
+  padding: 6px 10px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  outline: none;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.ido-board-search:focus {
+  border-color: var(--color-accent);
+}
+
+.ido-board-search::placeholder {
+  color: var(--color-text-muted);
+}
+
+.ido-board-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+}
+
+/* A custom checkbox so the unchecked state reads clearly — a bordered well that
+   fills with the accent + a checkmark when checked (native boxes are too faint). */
+.ido-board-control input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  display: grid;
+  place-content: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-board-control input[type="checkbox"]::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  transform: scale(0);
+  transition: transform var(--dur-fast) var(--ease-out);
+  background: var(--color-bg);
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+}
+
+.ido-board-control:hover input[type="checkbox"] {
+  border-color: var(--color-text-muted);
+}
+
+.ido-board-control input[type="checkbox"]:checked {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.ido-board-control input[type="checkbox"]:checked::before {
+  transform: scale(1);
+}
+
+.ido-board-control input[type="checkbox"]:focus-visible {
+  border-color: var(--color-accent);
+}
+
+.ido-board-select {
+  padding: 4px 6px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  outline: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+/* Custom caret on selects — a Lucide chevron matching our icon set, not the
+   platform arrow. (`select.ido-drawer-input` = the drawer's status/priority/goal
+   dropdowns; bare inputs keep their native rendering.) */
+.ido-board-select,
+select.ido-drawer-input {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23777169' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  background-size: 11px;
+  padding-right: 22px;
+}
+
+/* toolbar archive toggle (the view toggle before it carries the right-push) */
+.ido-board-archive {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+  transition: border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard),
+    background var(--dur-fast) var(--ease-standard);
+}
+
+.ido-board-archive:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-secondary);
+}
+
+.ido-board-archive.active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-text-primary);
+}
+
+/* the toolbar's dismissible "tag: … ×" chip, shown next to the filter input
+   while `State::tag_filter` is set — click clears it, same gesture as
+   clicking the active tag again on a card */
+.ido-board-tagchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-primary);
+}
+
+/* the toolbar's "views" dropdown (saved toolbar presets). The trigger matches
+   the archive toggle; the popover follows the datepicker / tag-autocomplete
+   popover vocabulary. */
+.ido-views {
+  position: relative;
+}
+
+.ido-views-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+  transition: border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard),
+    background var(--dur-fast) var(--ease-standard);
+}
+
+.ido-views-btn:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-secondary);
+}
+
+.ido-views-btn.active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-text-primary);
+}
+
+.ido-views-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  width: 220px;
+  padding: 6px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.ido-views-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.ido-views-empty {
+  padding: 6px 8px;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+}
+
+.ido-views-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.ido-views-row:hover {
+  background: var(--color-bg-subtle);
+}
+
+.ido-views-apply {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ido-views-row:hover .ido-views-apply {
+  color: var(--color-text-primary);
+}
+
+.ido-views-del {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 2px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text-muted);
+  opacity: 0;
+  transition: color var(--dur-fast) var(--ease-standard),
+    opacity var(--dur-fast) var(--ease-standard);
+}
+
+.ido-views-row:hover .ido-views-del {
+  opacity: 1;
+}
+
+.ido-views-del:hover {
+  color: var(--color-danger);
+}
+
+.ido-views-save {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.ido-views-input {
+  width: 100%;
+  padding: 5px 8px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  outline: none;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  color: var(--color-text-primary);
+}
+
+.ido-views-input:focus {
+  border-color: var(--color-accent);
+}
+
+.ido-views-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* archive view (replaces the board while the toggle is on) */
+.ido-archive {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 20px 18px;
+}
+
+.ido-archive-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 560px;
+}
+
+.ido-archive-head {
+  margin-bottom: 5px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.ido-archive-empty {
+  padding: 6px 8px;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.ido-archive-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.ido-archive-row:hover {
+  background: var(--color-bg-subtle);
+}
+
+.ido-archive-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ido-archive-name:hover {
+  color: var(--color-text-primary);
+}
+
+.ido-archive-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+  transition: border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-archive-action:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text-secondary);
+}
+
+.ido-archive-del {
+  padding: 4px 7px;
+}
+
+.ido-board {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.ido-column {
+  flex: 0 0 280px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.ido-column-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 8px;
+}
+
+.ido-column-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.ido-column-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.ido-column-cards {
+  flex: 1;
+  min-height: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 10px;
+  overflow-y: auto;
+}
+
+.ido-column-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 10px 10px;
+  padding: 7px 9px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+  transition: background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-column-add:hover {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+/* The quick-add capture input the "add" button swaps to (Enter adds a task,
+   the input stays open for the next one). Sized to sit where the button was. */
+.ido-column-quickadd {
+  margin: 6px 10px 10px;
+  padding: 7px 9px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  outline: none;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.ido-column-quickadd:focus {
+  border-color: var(--color-accent);
+}
+
+.ido-column-quickadd::placeholder {
+  color: var(--color-text-muted);
+}
+
+.ido-task-card {
+  position: relative; /* anchors the drop-before insertion line */
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 11px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-task-card:hover {
+  border-color: var(--color-border-strong);
+}
+
+.ido-task-card.active {
+  border-color: var(--color-accent);
+}
+
+/* keyboard roving-focus (board.rs: Enter/Space opens, arrows walk the grid) */
+.ido-task-card:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* the card being dragged */
+.ido-task-card.dragging {
+  opacity: 0.4;
+}
+
+/* insertion line shown above the card a drop would land before */
+.ido-task-card.drop-before::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -5px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-accent);
+}
+
+/* insertion line at the column's end (a drop would append) */
+.ido-column-cards.drop-end::after {
+  content: "";
+  display: block;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-accent);
+}
+
+.ido-task-title {
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  line-height: 1.35;
+  color: var(--color-text-primary);
+  word-break: break-word;
+}
+
+.ido-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ido-task-tag {
+  padding: 1px 7px;
+  background: var(--color-surface);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+  transition: background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-task-tag:hover {
+  color: var(--color-text-secondary);
+}
+
+/* the clicked tag scopes the board/backlog/calendar (toolbar mirrors it with
+   a dismissible chip) */
+.ido-task-tag.active {
+  background: var(--color-accent-soft);
+  color: var(--color-text-primary);
+}
+
+.ido-task-due {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+}
+
+/* due-date urgency (skipped on done-column cards): past-due gets the accent
+   treatment overdue goals use; due-today just steps up to full contrast */
+.ido-task-due.overdue {
+  color: var(--color-accent);
+  font-weight: var(--weight-medium);
+}
+
+.ido-task-due.due-today {
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+}
+
+/* recurrence indicator: a quiet icon-only badge, reused across the card meta
+   row, the backlog, calendar chips, and the day/overdue popover rows */
+.ido-task-repeat {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+/* checklist rollup chip ("3/7"): shown on the card + backlog row whenever the
+   body has task-list items; muted further once complete (done == total) */
+.ido-task-checks {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+}
+
+.ido-task-checks.complete {
+  opacity: 0.6;
+}
+
+.ido-task-pri {
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: var(--tracking-mono);
+}
+
+.ido-pri-high {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.ido-pri-normal {
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+}
+
+.ido-pri-low {
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-muted);
+}
+
+/* task detail drawer --------------------------------------------------- */
+.ido-drawer {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border-subtle);
+  z-index: 20;
+}
+
+.ido-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 12px 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.ido-drawer-title {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: var(--weight-medium);
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+}
+
+.ido-drawer-close {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+
+.ido-drawer-close:hover {
+  color: var(--color-text-primary);
+}
+
+.ido-drawer-fields {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.ido-drawer-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+}
+
+.ido-drawer-label {
+  flex: 0 0 60px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+}
+
+.ido-drawer-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  outline: none;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.ido-drawer-input:focus {
+  border-color: var(--color-accent);
+}
+
+/* Date inputs: `color-scheme` (set per-theme below) makes the native calendar
+   icon + popup follow the app theme; quiet the indicator and drop the spinner. */
+/* Custom date picker (replaces the native `<input type=date>` whose popup can't
+   be themed): a trigger styled like an input, plus a calendar popover. */
+.ido-datepicker {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.ido-date-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ido-date-trigger .icon {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+.ido-date-value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: var(--tracking-mono);
+}
+
+.ido-date-placeholder {
+  color: var(--color-text-muted);
+}
+
+.ido-date-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  width: 232px;
+  padding: 8px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.ido-date-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.ido-date-title {
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: var(--weight-medium);
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+}
+
+.ido-date-navbtn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text-muted);
+  transition: background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-date-navbtn:hover {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+}
+
+.ido-date-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+}
+
+.ido-date-wd {
+  display: grid;
+  place-items: center;
+  height: 22px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+
+.ido-date-cell {
+  display: grid;
+  place-items: center;
+  height: 28px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  transition: background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-date-cell:hover {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+}
+
+.ido-date-empty {
+  cursor: default;
+}
+
+.ido-date-cell.today {
+  color: var(--color-accent);
+  font-weight: var(--weight-semibold);
+}
+
+.ido-date-cell.sel,
+.ido-date-cell.sel:hover {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+/* Optional due time (P2.1) — a plain `HH:MM` input, no clock widget. */
+.ido-date-time {
+  width: 100%;
+  margin-top: 6px;
+  padding: 5px 8px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  outline: none;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-primary);
+}
+
+.ido-date-time:focus {
+  border-color: var(--color-accent);
+}
+
+.ido-date-time::placeholder {
+  color: var(--color-text-muted);
+}
+
+.ido-date-foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.ido-date-action {
+  padding: 2px 4px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-date-action:hover {
+  color: var(--color-accent);
+}
+
+/* Tag autocomplete (P2.5): a plain input plus a datepicker-styled suggestion
+   popover, anchored the same way as `.ido-date-pop`. */
+.ido-tags-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.ido-tags-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  max-height: 176px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.ido-tags-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+}
+
+.ido-tags-item.active {
+  background: var(--color-accent-soft);
+  color: var(--color-text-primary);
+}
+
+/* Wraps the shared block editor in the task drawer (fills the space, scrolls). */
+/* The drawer's three-mode editor (DocEditor): a compact mode toggle over a body
+   that fills the remaining drawer height. */
+.ido-doc-editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ido-doc-modes {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.ido-doc-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ido-doc-body > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* The editor surfaces, narrowed for the drawer (drop the main pane's wide,
+   centered column). */
+.ido-doc-body .ido-block-editor {
+  max-width: none;
+  margin: 0;
+  padding: 12px 16px 40px;
+}
+
+.ido-doc-body .ido-editor {
+  max-width: none;
+  margin: 0;
+  padding: 12px 16px;
+}
+
+.ido-doc-reading {
+  overflow-y: auto;
+  padding: 12px 16px 40px;
+}
+
+.ido-drawer-foot {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.ido-drawer-delete,
+.ido-drawer-archive {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  background: transparent;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+  transition: border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-drawer-delete:hover,
+.ido-drawer-archive:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text-secondary);
+}
+
+/* drop target highlight (column or backlog being dragged over) */
+.ido-column.drop {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.ido-backlog.drop {
+  background: var(--color-accent-soft);
+}
+
+/* backlog (un-columned tasks, below the board) ------------------------- */
+.ido-backlog {
+  flex: none;
+  max-height: 32%;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--color-border-subtle);
+  background: var(--color-bg);
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.ido-backlog-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.ido-backlog-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 12px 12px;
+  overflow-y: auto;
+}
+
+/* insertion line at the backlog's end (a drop would append) — mirrors
+   .ido-column-cards.drop-end */
+.ido-backlog-list.drop-end::after {
+  content: "";
+  display: block;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-accent);
+}
+
+.ido-backlog-row {
+  position: relative; /* anchors the drop-before insertion line */
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.ido-backlog-row:hover {
+  background: var(--color-bg-subtle);
+}
+
+/* keyboard focus (board.rs: tabindex + Enter/Space opens) */
+.ido-backlog-row:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+/* the row being dragged — mirrors .ido-task-card.dragging */
+.ido-backlog-row.dragging {
+  opacity: 0.4;
+}
+
+/* insertion line shown above the row a drop would land before — mirrors
+   .ido-task-card.drop-before::before */
+.ido-backlog-row.drop-before::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -5px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-accent);
+}
+
+.ido-backlog-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ido-backlog-meta {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ido-backlog-orphan {
+  padding: 1px 7px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+}
+
+.ido-backlog-empty {
+  padding: 6px 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+}
+
+/* goals bar (above the board) ----------------------------------------- */
+.ido-goals-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ido-goals-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.ido-goal-chip {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px 4px 11px;
+  background: transparent;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  transition: border-color var(--dur-fast) var(--ease-standard),
+    background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-goal-chip:hover {
+  border-color: var(--color-border-strong);
+}
+
+.ido-goal-chip.active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-text-primary);
+}
+
+/* drag-to-reorder: the dragged chip dims, an accent line marks the drop slot. */
+.ido-goal-chip.dragging {
+  opacity: 0.4;
+}
+
+.ido-goal-chip.drop-before::before,
+.ido-goal-chip.drop-after::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--color-accent);
+}
+
+.ido-goal-chip.drop-before::before {
+  left: -5px;
+}
+
+.ido-goal-chip.drop-after::after {
+  right: -5px;
+}
+
+.ido-goal-all {
+  gap: 5px;
+  padding: 4px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+}
+
+.ido-goal-name {
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.ido-goal-progress {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+}
+
+.ido-goal-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+}
+
+/* overdue goal: the target date is past and the goal isn't complete */
+.ido-goal-target.overdue {
+  color: var(--color-accent);
+  font-weight: var(--weight-medium);
+}
+
+.ido-goal-edit {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text-muted);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-goal-chip:hover .ido-goal-edit {
+  opacity: 1;
+}
+
+.ido-goal-edit:hover {
+  color: var(--color-text-primary);
+}
+
+.ido-goal-new {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  color: var(--color-text-muted);
+  transition: border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-goal-new:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text-secondary);
+}
+
+/* tasks calendar view =================================================== */
+
+/* toolbar view toggle (board | calendar), pushed right beside the archive
+   button — a joined icon-button pair, the active view accented */
+.ido-view-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.ido-view-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 26px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  transition: background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-view-btn:hover {
+  color: var(--color-text-secondary);
+}
+
+.ido-view-btn.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.ido-cal {
+  position: relative; /* anchors the unschedule tray + the day popover */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* header: ‹ month year › · today · overdue rollup */
+.ido-cal-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px 8px;
+}
+
+.ido-cal-title {
+  min-width: 132px;
+  text-align: center;
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: var(--weight-medium);
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+}
+
+.ido-cal-todaybtn {
+  margin-left: 6px;
+  padding: 3px 10px;
+  background: transparent;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+  transition: border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-cal-todaybtn:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-secondary);
+}
+
+/* the quiet overdue-count chip (right edge) + its popover anchor */
+.ido-cal-overdue-wrap {
+  position: relative;
+  margin-left: auto;
+}
+
+.ido-cal-overduechip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  background: var(--color-accent-soft);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-accent);
+  transition: border-color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-cal-overduechip:hover,
+.ido-cal-overduechip.open {
+  border-color: var(--color-accent);
+}
+
+.ido-cal-overdue-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  width: 280px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+
+/* weekday labels (Mo–Su), aligned over the grid columns */
+.ido-cal-weekdays {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  padding: 0 18px;
+}
+
+.ido-cal-weekdays span {
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+}
+
+/* the month grid: whole weeks share the section height evenly; cells clip
+   their overflow (the "+N more" row stands in for hidden chips) */
+.ido-cal-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: minmax(0, 1fr);
+  margin: 0 18px 18px;
+  border-top: 1px solid var(--color-border-subtle);
+  border-left: 1px solid var(--color-border-subtle);
+}
+
+.ido-cal-cell {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 5px 6px;
+  border-right: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--color-border-subtle);
+  overflow: hidden;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+/* leading/trailing days of the adjacent months: dimmed but fully live */
+.ido-cal-cell.outside {
+  background: var(--color-bg-subtle);
+}
+
+.ido-cal-cell.outside .ido-cal-daynum {
+  color: var(--color-text-muted);
+}
+
+/* today: an inset accent ring, the datepicker's today treatment scaled up */
+.ido-cal-cell.today {
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.ido-cal-cell.today .ido-cal-daynum {
+  color: var(--color-accent);
+  font-weight: var(--weight-semibold);
+}
+
+/* a dragged card hovering this day */
+.ido-cal-cell.drop {
+  background: var(--color-accent-soft);
+}
+
+.ido-cal-daynum {
+  align-self: flex-start;
+  padding: 1px 4px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  transition: background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-cal-daynum:hover {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+}
+
+/* a goal's target band on its target-date cell */
+.ido-cal-goal {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 5px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  transition: border-color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-cal-goal:hover {
+  border-color: var(--color-border-strong);
+}
+
+.ido-cal-goal .icon {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+/* overdue goal: target past, not complete — the goals bar's accent */
+.ido-cal-goal.overdue {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.ido-cal-goal.overdue .icon {
+  color: var(--color-accent);
+}
+
+.ido-cal-goal-title {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* a task chip: priority dot + one ellipsized title line */
+.ido-cal-chip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 6px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-cal-chip:hover {
+  border-color: var(--color-border-strong);
+}
+
+.ido-cal-chip.dragging {
+  opacity: 0.4;
+}
+
+.ido-cal-chip-title {
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* the priority dot: colored through the shared .ido-pri-* classes (high =
+   accent, normal = secondary, low = muted) via currentColor */
+.ido-cal-pridot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+}
+
+/* chip urgency, from due_state — the board cards' vocabulary */
+.ido-cal-chip.overdue {
+  border-color: var(--color-accent);
+}
+
+.ido-cal-chip.overdue .icon {
+  flex: none;
+  color: var(--color-accent);
+}
+
+.ido-cal-chip.due-today {
+  border-color: var(--color-border-strong);
+}
+
+.ido-cal-chip.due-today .ido-cal-chip-title {
+  font-weight: var(--weight-medium);
+}
+
+/* done-column chips (hide-done off): present but quiet */
+.ido-cal-chip.done .ido-cal-chip-title {
+  color: var(--color-text-muted);
+}
+
+.ido-cal-chip.done .ido-cal-pridot {
+  opacity: 0.45;
+}
+
+.ido-cal-more {
+  align-self: flex-start;
+  padding: 0 4px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-cal-more:hover {
+  color: var(--color-accent);
+}
+
+/* unschedule tray: overlays the grid's bottom edge only while a drag is live
+   (always mounted + class-toggled, so appearing never reflows mid-drag) */
+.ido-cal-tray {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px;
+  background: var(--color-bg);
+  border: 1px dashed var(--color-border-strong);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+
+.ido-cal-tray.live {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ido-cal-tray.drop {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+/* day popover: a centered panel over the calendar area (the search palette's
+   scrim), listing a day's chips uncapped plus a quick-add */
+.ido-cal-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10vh;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.ido-cal-pop {
+  width: 300px;
+  max-height: 60%;
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.ido-cal-pop-head {
+  padding: 0 4px 8px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: var(--weight-medium);
+  color: var(--color-text-primary);
+}
+
+.ido-cal-pop-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0;
+  overflow-y: auto;
+}
+
+.ido-cal-pop-empty {
+  padding: 8px 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+}
+
+/* one popover row (day + overdue popovers) */
+.ido-cal-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.ido-cal-row:hover {
+  background: var(--color-bg-subtle);
+}
+
+.ido-cal-row-title {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ido-cal-row-title.done {
+  color: var(--color-text-muted);
+}
+
+/* the popover's quick-add reuses the column quick-add style, full width */
+.ido-cal-pop .ido-column-quickadd {
+  margin: 8px 0 0;
+  width: 100%;
+}
+
+/* tasks table view ===================================================== */
+
+/* the table owns its own scroll — wide content never scrolls the page
+   (CLAUDE.md rule); the sticky header rides the top edge as rows scroll */
+.ido-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--color-bg);
+}
+
+.ido-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-ui);
+}
+
+/* sticky, clickable column headers — the mono/uppercase key voice shared with
+   the backlog + column heads */
+.ido-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 8px 12px;
+  text-align: left;
+  white-space: nowrap;
+  background: var(--color-bg-subtle);
+  border-bottom: 1px solid var(--color-border-subtle);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: var(--weight-regular);
+  color: var(--color-text-muted);
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-table thead th:hover {
+  color: var(--color-text-secondary);
+}
+
+.ido-table thead th.sorted {
+  color: var(--color-text-primary);
+}
+
+.ido-th-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* compact review rows — closer to the backlog rows than to the cards */
+.ido-table-row {
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-border-subtle);
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.ido-table-row:hover {
+  background: var(--color-bg-subtle);
+}
+
+.ido-table-row.active {
+  background: var(--color-accent-soft);
+}
+
+.ido-table-row:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.ido-table td {
+  padding: 7px 12px;
+  vertical-align: middle;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+}
+
+.ido-td-title {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  min-width: 160px;
+}
+
+.ido-td-goal,
+.ido-td-completed {
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* the status pill — a real column reads plain; the backlog reads muted */
+.ido-table-status {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.ido-table-status.backlog {
+  color: var(--color-text-muted);
+}
+
+.ido-td-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.ido-table-empty {
+  padding: 18px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-muted);
+}
+
 /* settings modal ======================================================= */
 .ido-modal-backdrop {
   position: fixed;
@@ -1161,6 +3363,247 @@ body {
   color: var(--color-text-primary);
 }
 
+/* ============================================================== search === */
+/* The cross-section search palette (Ctrl+K / rail search button). */
+.ido-search-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.ido-search-panel {
+  width: 100%;
+  max-width: 560px;
+  max-height: 64vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.ido-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-text-muted);
+}
+
+.ido-search-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  color: var(--color-text-primary);
+}
+
+.ido-search-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.ido-search-results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ido-search-empty {
+  padding: 20px 16px;
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.ido-search-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 16px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--color-border-subtle);
+  text-align: left;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+
+.ido-search-result:first-child {
+  border-top: none;
+}
+
+.ido-search-result.sel {
+  background: var(--color-accent-soft);
+}
+
+.ido-search-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.ido-search-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.ido-search-name {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ido-search-kind {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs, 11px);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.ido-search-snippet {
+  margin-top: 2px;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* matched substring in a result's title / snippet */
+.ido-search-hl {
+  background: var(--color-accent-soft);
+  color: var(--color-text-primary);
+  border-radius: 2px;
+}
+
+/* =============================================================== toast === */
+.ido-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px 8px 14px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.ido-toast-msg {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.ido-toast-undo {
+  padding: 2px 4px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-accent);
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-toast-undo:hover {
+  color: var(--color-accent-hover);
+}
+
+.ido-toast-close {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text-muted);
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-toast-close:hover {
+  color: var(--color-text-primary);
+}
+
+/* ======================================================== context menu === */
+.ido-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+}
+
+.ido-menu {
+  position: fixed;
+  min-width: 172px;
+  padding: 4px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.ido-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 9px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  transition: background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-menu-item:hover {
+  background: var(--color-accent-soft);
+  color: var(--color-text-primary);
+}
+
+.ido-menu-icon {
+  display: grid;
+  place-items: center;
+  color: var(--color-text-muted);
+}
+
+.ido-menu-item:hover .ido-menu-icon {
+  color: var(--color-text-secondary);
+}
+
+.ido-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--color-border-subtle);
+}
+
 .ido-settings-row {
   display: flex;
   align-items: center;
@@ -1184,6 +3627,52 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* a stacked settings row: label above a full-width field + hint */
+.ido-settings-row-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.ido-settings-input {
+  padding: 7px 10px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  outline: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+
+.ido-settings-input:focus {
+  border-color: var(--color-accent);
+}
+
+.ido-settings-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+/* a narrow field + unit suffix, side by side (e.g. auto-archive days) */
+.ido-settings-inline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ido-settings-input-narrow {
+  width: 64px;
+  text-align: right;
+}
+
+.ido-settings-suffix {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--color-text-muted);
 }
 
 /* scrollbars — thin, brand-toned ====================================== */
@@ -1357,9 +3846,9 @@ body {
   font-weight: var(--weight-medium);
 }
 
-.ido-block input[type="checkbox"] {
-  margin-right: 0.5em;
-  accent-color: var(--color-accent);
+.ido-block img {
+  max-width: 100%;
+  border-radius: var(--radius-md);
 }
 
 /* The raw-markdown textarea shown for the active block.

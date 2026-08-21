@@ -30,3 +30,10 @@ verify: fmt-check check test
 # Dev: Trunk dev server + native window, hot reload.
 dev:
     cargo tauri dev
+
+# Dev with WebView2 remote debugging on :9222 (Windows only — WebView2 is
+# Chromium-based, so this exposes the Chrome DevTools Protocol: DOM queries,
+# scripted clicks, screenshots. Used for AI-driven / automated UI verification;
+# see `.claude/skills/run` for the driver script). Kill the window to stop it.
+dev-debug:
+    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222'; cargo tauri dev

@@ -61,6 +61,22 @@ pub(crate) fn join_rel(parent: &str, name: &str) -> String {
     }
 }
 
+/// Slugify a title into a flat wiki page id: lowercase, runs of non-alphanumeric
+/// characters collapse to a single `-`, leading/trailing dashes trimmed. Unicode
+/// letters/digits are kept (so non-latin titles still slug). May return `""` for
+/// punctuation-only input — callers fall back to a default.
+pub(crate) fn slugify(title: &str) -> String {
+    let mut out = String::new();
+    for ch in title.trim().chars() {
+        if ch.is_alphanumeric() {
+            out.extend(ch.to_lowercase());
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
 /// Trim and validate an entry name: must be non-empty and contain no path
 /// separators (so it stays a single tree level).
 pub(crate) fn valid_name(name: &str) -> Result<&str, String> {
@@ -117,5 +133,15 @@ mod tests {
         assert!(valid_name("").is_err());
         assert!(valid_name("a/b").is_err());
         assert!(valid_name("a\\b").is_err());
+    }
+
+    #[test]
+    fn slugs() {
+        assert_eq!(slugify("Auth System"), "auth-system");
+        assert_eq!(slugify("  Hello, World!  "), "hello-world");
+        assert_eq!(slugify("C++ Notes"), "c-notes");
+        assert_eq!(slugify("foo/bar"), "foo-bar");
+        assert_eq!(slugify("already-slug"), "already-slug");
+        assert_eq!(slugify("!!!"), "");
     }
 }

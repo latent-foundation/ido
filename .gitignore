@@ -22,6 +22,9 @@ target
 
 /dist/
 /target/
-/Cargo.lock
+# Cargo.lock is deliberately NOT ignored: `ido` ships as an application, not a
+# library, so the lockfile is what makes a `vX.Y.Z` tag resolve to the same
+# dependency graph in CI as it did locally. Committing it is what lets a release
+# claim to correspond exactly to the tagged source.
 
 .claude

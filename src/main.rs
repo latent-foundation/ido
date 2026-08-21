@@ -6,14 +6,17 @@
 //! - [`state`] — reactive [`state::State`] + action methods, shared via context
 //! - [`blocks`] — markdown block segmentation for the live editor
 //! - [`markdown`] — markdown → HTML for per-block and reading-view rendering
-//! - [`icon`] — inline icons
+//! - [`dates`] — shared date math (parsing, formatting, calendar arithmetic)
 //! - [`components`] — the title bar, launcher, editor, tree, and settings
 //! - [`app`] — the root that composes them
+//!
+//! Icons (`latent_ui::Icon`) and host-OS detection (`latent_ui::platform`) come
+//! from the shared crate, not from here — see `vendor/latent-design/docs/ecosystem.md`.
 
 mod app;
 mod blocks;
 mod components;
-mod icon;
+mod dates;
 mod ipc;
 mod markdown;
 mod model;
