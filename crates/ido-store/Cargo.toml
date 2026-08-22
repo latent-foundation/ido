@@ -17,6 +17,7 @@ semantic = [
     "dep:tokenizers",
     "dep:ureq",
     "dep:dirs",
+    "dep:rayon",
 ]
 
 [dependencies]
@@ -54,6 +55,10 @@ ureq = { version = "3", features = ["rustls"], optional = true }
 # `<data_dir>/latent.ido/models/` — models are shared across wells, unlike
 # the per-well rebuildable `.ido/index/`.
 dirs = { version = "6", optional = true }
+# Batch-level parallelism for the index build (§6.3 "honest costs": the cold
+# build is the real exposure, and "rayon across batches" is its first named
+# mitigation). Already in candle's own tree, so this costs no new crates.
+rayon = { version = "1", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

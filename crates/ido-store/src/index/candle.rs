@@ -19,6 +19,7 @@ use std::path::Path;
 use candle_core::{Device, IndexOp, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config, DTYPE};
+use rayon::prelude::*;
 use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
 
 use super::embed::{Arch, Embedder, ModelSpec, Pooling, Role};
@@ -157,12 +158,25 @@ impl Embedder for CandleEmbedder {
 
     fn embed(&self, texts: &[String], role: Role) -> Result<Vec<Vec<f32>>, String> {
         let prefix = role_prefix(self.spec, role);
-        let mut out = Vec::with_capacity(texts.len());
-        for batch in texts.chunks(MAX_BATCH) {
-            let prefixed: Vec<String> = batch.iter().map(|t| with_prefix(prefix, t)).collect();
-            out.extend(self.embed_batch(&prefixed)?);
-        }
-        Ok(out)
+        // Batches run in parallel — §6.3's first named mitigation for the cold
+        // build, and the one that actually moves the number here: candle's own
+        // gemm threading barely engages at this model's matrix sizes (384-wide
+        // hidden), so the cores sit idle unless whole forward passes overlap.
+        // Sound because a forward pass only *reads* the model: `BertModel` and
+        // `Tokenizer` are both `Sync`, and every tensor it builds is local to
+        // the batch.
+        //
+        // `par_chunks` is an *indexed* parallel iterator, so collecting is
+        // order-preserving — threads reorder the work, never the output. The
+        // `Result` collect short-circuits on the first failing batch.
+        let batches: Vec<Vec<Vec<f32>>> = texts
+            .par_chunks(MAX_BATCH)
+            .map(|batch| {
+                let prefixed: Vec<String> = batch.iter().map(|t| with_prefix(prefix, t)).collect();
+                self.embed_batch(&prefixed)
+            })
+            .collect::<Result<_, String>>()?;
+        Ok(batches.into_iter().flatten().collect())
     }
 }
 

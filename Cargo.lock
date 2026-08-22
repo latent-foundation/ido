@@ -2482,6 +2482,7 @@ dependencies = [
  "chrono",
  "dirs",
  "pulldown-cmark",
+ "rayon",
  "serde",
  "serde_json",
  "sha2",
