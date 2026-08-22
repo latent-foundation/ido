@@ -9,10 +9,14 @@
 //! **stdout is the JSON-RPC channel.** Every diagnostic goes to stderr, and
 //! stays sparse: a startup line and errors, never entry bodies (§9).
 //!
-//! This module owns argument parsing and well resolution; [`server`] is the
-//! MCP layer and [`tools`] holds the tool bodies.
+//! This module owns argument parsing, well resolution, and the two offline
+//! commands' entry points; [`server`] is the MCP layer, [`tools`] holds the
+//! tool bodies, [`semantic`] owns the embedder and index freshness, and
+//! [`maintenance`] implements `--reindex` / `--eval`.
 
+mod maintenance;
 mod render;
+mod semantic;
 mod server;
 mod tools;
 
@@ -28,25 +32,62 @@ ido-mcp — read-only MCP server over one ido well (stdio transport)
 
 USAGE:
     ido-mcp [--well <path>]
+    ido-mcp [--well <path>] --reindex
+    ido-mcp [--well <path>] --eval <eval.jsonl>
 
 OPTIONS:
     --well <path>   The well folder to serve. Falls back to the IDO_WELL
                     environment variable, then to the most recently opened well
                     in ido's registry.
+    --reindex       Rebuild the semantic index from scratch, print its status,
+                    and exit without serving.
+    --eval <path>   Score keyword / semantic / hybrid retrieval over a JSONL
+                    query set, print the table, and exit without serving.
+                    Exits 1 if hybrid fails the gate.
     -h, --help      Print this help and exit.
     -V, --version   Print the version and exit.
 
 One well per process: register the server once per well in your MCP client.
-The server never writes to the well.";
+The server never writes or modifies well content. With semantic search active
+it maintains a rebuildable search cache under <well>/.ido/index.";
 
-/// Exit code for a usage or well-resolution failure (the well is the one thing
-/// this process cannot start without).
+/// Exit code for a usage failure, an unresolvable well, or a command this
+/// build/machine cannot run (no `semantic` feature, no downloaded model).
 const EXIT_USAGE: i32 = 2;
 
-/// Parse `--well` / `--help` / `--version` by hand — three flags do not earn a
-/// CLI-parsing dependency. `--help` and `--version` exit the process directly.
-fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<PathBuf>, String> {
+/// What this invocation should do. Both offline commands exit before the
+/// transport opens, which is what lets them print to stdout.
+#[derive(Debug, PartialEq, Eq)]
+enum Action {
+    /// Speak MCP over stdio (the default).
+    Serve,
+    /// Force a full index rebuild, then exit.
+    Reindex,
+    /// Score retrieval over a query set, then exit.
+    Eval(PathBuf),
+}
+
+/// The parsed command line.
+#[derive(Debug, PartialEq, Eq)]
+struct Cli {
+    /// `--well`, if given (see [`resolve_well`] for the fallbacks).
+    well: Option<PathBuf>,
+    /// What to do once the well is resolved.
+    action: Action,
+}
+
+/// Parse the flags by hand — five do not earn a CLI-parsing dependency.
+/// `--help` and `--version` exit the process directly.
+fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
     let mut well = None;
+    let mut action = Action::Serve;
+    let set_action = |next: Action, action: &mut Action| -> Result<(), String> {
+        if *action != Action::Serve {
+            return Err("--reindex and --eval can't be combined".to_string());
+        }
+        *action = next;
+        Ok(())
+    };
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -64,13 +105,25 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<PathBuf>, Str
                     .ok_or_else(|| "--well needs a path".to_string())?;
                 well = Some(PathBuf::from(value));
             }
-            other => match other.strip_prefix("--well=") {
-                Some(value) => well = Some(PathBuf::from(value)),
-                None => return Err(format!("unknown argument `{other}`\n\n{USAGE}")),
-            },
+            "--reindex" => set_action(Action::Reindex, &mut action)?,
+            "--eval" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--eval needs a path to a .jsonl query set".to_string())?;
+                set_action(Action::Eval(PathBuf::from(value)), &mut action)?;
+            }
+            other => {
+                if let Some(value) = other.strip_prefix("--well=") {
+                    well = Some(PathBuf::from(value));
+                } else if let Some(value) = other.strip_prefix("--eval=") {
+                    set_action(Action::Eval(PathBuf::from(value)), &mut action)?;
+                } else {
+                    return Err(format!("unknown argument `{other}`\n\n{USAGE}"));
+                }
+            }
         }
     }
-    Ok(well)
+    Ok(Cli { well, action })
 }
 
 /// The most-recently-opened well from ido's registry, if it still exists.
@@ -141,34 +194,54 @@ fn warn_if_unscaffolded(well: &Path) {
     }
 }
 
+/// Print `message` under the binary's name and exit — the one way this process
+/// refuses to start.
+fn die(message: &str, code: i32) -> ! {
+    eprintln!("ido-mcp: {message}");
+    std::process::exit(code)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let flag = match parse_args(std::env::args().skip(1)) {
-        Ok(flag) => flag,
-        Err(message) => {
-            eprintln!("ido-mcp: {message}");
-            std::process::exit(EXIT_USAGE);
-        }
-    };
-    let (well, source) = match resolve_well(flag) {
-        Ok(resolved) => resolved,
-        Err(message) => {
-            eprintln!("ido-mcp: {message}");
-            std::process::exit(EXIT_USAGE);
-        }
-    };
+    let cli = parse_args(std::env::args().skip(1)).unwrap_or_else(|m| die(&m, EXIT_USAGE));
+    let (well, source) = resolve_well(cli.well).unwrap_or_else(|m| die(&m, EXIT_USAGE));
     warn_if_unscaffolded(&well);
-    eprintln!(
-        "ido-mcp {} — serving `{}` (from {source}) read-only over stdio (keyword search)",
-        env!("CARGO_PKG_VERSION"),
-        well.display()
-    );
 
-    server::Ido::open(&well)
-        .serve(stdio())
-        .await?
-        .waiting()
-        .await?;
+    // The offline commands run on the blocking side of the runtime — they are
+    // long, CPU-bound, and nothing else is happening — and exit when done.
+    match cli.action {
+        Action::Reindex | Action::Eval(_) => {
+            let result = tokio::task::spawn_blocking(move || match cli.action {
+                Action::Reindex => maintenance::reindex(&well),
+                Action::Eval(path) => maintenance::run_eval(&well, &path),
+                Action::Serve => unreachable!("guarded by the outer match"),
+            })
+            .await?;
+            match result {
+                Ok(()) => std::process::exit(0),
+                Err(e) => die(&e.message, e.code),
+            }
+        }
+        Action::Serve => {}
+    }
+
+    let ido = server::Ido::open(&well);
+    eprintln!(
+        "ido-mcp {} — serving `{}` (from {source}) read-only over stdio\n{}",
+        env!("CARGO_PKG_VERSION"),
+        well.display(),
+        match semantic::Semantic::new(&well.to_string_lossy()).unavailable() {
+            Some(reason) => format!("ido-mcp: keyword search only — {reason}"),
+            None => "ido-mcp: hybrid search available (semantic index maintained in the \
+                     background under .ido/index)"
+                .to_string(),
+        }
+    );
+    // §6.6: one sweep at startup, detached — the server must be answering
+    // `tools/list` in milliseconds, not after a cold index build.
+    ido.start_index_maintenance();
+
+    ido.serve(stdio()).await?.waiting().await?;
     Ok(())
 }
 
@@ -183,17 +256,39 @@ mod tests {
             .into_iter()
     }
 
+    fn well_of(list: &[&str]) -> Option<PathBuf> {
+        parse_args(args(list)).unwrap().well
+    }
+
     #[test]
     fn well_flag_parses_in_both_spellings() {
-        assert_eq!(parse_args(args(&[])).unwrap(), None);
+        assert_eq!(well_of(&[]), None);
         assert_eq!(
-            parse_args(args(&["--well", "/tmp/w"])).unwrap(),
+            well_of(&["--well", "/tmp/w"]),
             Some(PathBuf::from("/tmp/w"))
         );
+        assert_eq!(well_of(&["--well=/tmp/w"]), Some(PathBuf::from("/tmp/w")));
+    }
+
+    #[test]
+    fn serving_is_the_default_action() {
+        assert_eq!(parse_args(args(&[])).unwrap().action, Action::Serve);
         assert_eq!(
-            parse_args(args(&["--well=/tmp/w"])).unwrap(),
-            Some(PathBuf::from("/tmp/w"))
+            parse_args(args(&["--well", "/tmp/w"])).unwrap().action,
+            Action::Serve
         );
+    }
+
+    #[test]
+    fn the_offline_commands_parse_with_a_well() {
+        let cli = parse_args(args(&["--well", "/tmp/w", "--reindex"])).unwrap();
+        assert_eq!(cli.well, Some(PathBuf::from("/tmp/w")));
+        assert_eq!(cli.action, Action::Reindex);
+
+        for spelling in [vec!["--eval", "q.jsonl"], vec!["--eval=q.jsonl"]] {
+            let cli = parse_args(args(&spelling)).unwrap();
+            assert_eq!(cli.action, Action::Eval(PathBuf::from("q.jsonl")));
+        }
     }
 
     #[test]
@@ -201,6 +296,11 @@ mod tests {
         assert!(parse_args(args(&["--well"])).is_err(), "missing value");
         assert!(parse_args(args(&["--wel", "/tmp/w"])).is_err(), "typo");
         assert!(parse_args(args(&["/tmp/w"])).is_err(), "positional");
+        assert!(parse_args(args(&["--eval"])).is_err(), "missing query set");
+        assert!(
+            parse_args(args(&["--reindex", "--eval", "q.jsonl"])).is_err(),
+            "two offline commands in one run is a mistake, not a sequence"
+        );
     }
 
     #[test]

@@ -8,18 +8,27 @@
 //!
 //! Every read goes through `ido_store`, so there is never a second, drifting
 //! copy of "how a task file is parsed" — and **nothing here writes**: no
-//! `migrate_well`, no sweep, no store mutation of any kind.
+//! `migrate_well`, no `migrate_well` scaffold, no store mutation of any kind.
+//! The one thing the process may write is the rebuildable search cache under
+//! `<well>/.ido/index/`, and that happens in [`crate::semantic`], never here.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+use ido_store::index::hybrid::{self, SearchMode};
 use ido_store::model::{Section, Task, TreeNode};
-use ido_store::{notes, search as store_search, tasks, wells, wiki};
+use ido_store::{notes, tasks, wells, wiki};
 use rmcp::schemars;
 
 use crate::render::{
     cell, clamp_limit, content_block, dash, guard_id, header, iso_date, paging, row, window,
 };
+use crate::semantic::Semantic;
+
+/// How deep the retrieval stack reaches before `section` scoping and `limit`
+/// trim it. Matches the store's own cap, so scoping to one section can't starve
+/// a result list that a broader query would have filled.
+const MAX_SCAN: usize = 50;
 
 // --- parameters -------------------------------------------------------------
 //
@@ -30,14 +39,36 @@ use crate::render::{
 /// Parameters for [`search`].
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SearchParams {
-    /// What to look for. Case-insensitive substring match over titles, bodies,
-    /// and task tags — this is keyword search, not semantic, so prefer the
-    /// literal words the note would use.
+    /// What to look for. In the default "hybrid" mode a natural-language
+    /// question works as well as literal words; in "keyword" mode this is a
+    /// case-insensitive substring match over titles, bodies and task tags.
     pub query: String,
     /// Restrict to one section: "notes", "wiki", or "tasks". Omit to search all three.
     pub section: Option<String>,
+    /// How to retrieve: "hybrid" (default — meaning and exact words fused),
+    /// "semantic" (meaning only; finds a note that never uses your words), or
+    /// "keyword" (exact substrings only; best for an identifier, a slug, a
+    /// spelling). If this well has no semantic index, every mode answers with
+    /// keyword results and the response says so.
+    pub mode: Option<String>,
     /// Max hits to return (default 10, hard cap 50).
     pub limit: Option<u32>,
+}
+
+impl SearchParams {
+    /// The requested retrieval mode, defaulting to hybrid (§5.2). An
+    /// unrecognised value is an error, not a silent fallback.
+    pub fn mode(&self) -> Result<SearchMode, String> {
+        match self
+            .mode
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+        {
+            Some(mode) => SearchMode::parse(mode),
+            None => Ok(SearchMode::Hybrid),
+        }
+    }
 }
 
 /// Parameters for [`get_entry`].
@@ -262,8 +293,9 @@ fn file_stats(path: &Path) -> (String, String) {
 
 // --- 1. well_info -----------------------------------------------------------
 
-/// Orientation: what this well is, how its board is shaped, and how much is in it.
-pub fn well_info(well: &str, name: &str) -> String {
+/// Orientation: what this well is, how its board is shaped, how much is in it,
+/// and which search modes are actually live here (§5.2's index status).
+pub fn well_info(well: &str, name: &str, semantic: &Semantic) -> String {
     let manifest = wells::read_manifest(well);
     let columns = tasks::task_columns(well.to_string());
     let all_tasks = tasks::list_tasks(well.to_string());
@@ -313,8 +345,17 @@ pub fn well_info(well: &str, name: &str) -> String {
             None => "off".to_string(),
         }
     );
-    let _ = writeln!(out, "- search: keyword-only (semantic index not built)");
-    let _ = writeln!(out, "- access: read-only (this server never writes)");
+    let _ = writeln!(out, "{}", semantic.status_lines());
+    let _ = writeln!(
+        out,
+        "- access: read-only — this server never creates, edits or deletes any note, page, task \
+         or goal{}",
+        if semantic.unavailable().is_none() {
+            "; the one thing it writes is the rebuildable search cache under `.ido/index`"
+        } else {
+            " and writes nothing at all"
+        }
+    );
     if !Path::new(well).join(".ido").join("well.toml").exists() {
         let _ = writeln!(
             out,
@@ -344,12 +385,18 @@ pub fn well_info(well: &str, name: &str) -> String {
 
 // --- 2. search --------------------------------------------------------------
 
-/// Keyword search across notes, wiki pages, and tasks.
-pub fn search(well: &str, p: SearchParams) -> Result<String, String> {
+/// Hybrid / semantic / keyword search across notes, wiki pages, and tasks.
+///
+/// The mode that actually ran is reported in the heading, and a request that
+/// had to fall back says why in the line under it (§6.1: degradation is never
+/// silent — a model reading "hybrid" over keyword-only results would draw the
+/// wrong conclusion from an empty answer).
+pub fn search(well: &str, semantic: &Semantic, p: SearchParams) -> Result<String, String> {
     let query = p.query.trim().to_string();
     if query.is_empty() {
         return Err("query is empty — pass the words you expect to appear".to_string());
     }
+    let requested = p.mode()?;
     let wanted = match p
         .section
         .as_deref()
@@ -365,13 +412,22 @@ pub fn search(well: &str, p: SearchParams) -> Result<String, String> {
     };
     let limit = clamp_limit(p.limit, 10, 50);
 
-    let all = store_search::search(well.to_string(), query.clone());
-    let scanned = all.len();
-    let hits: Vec<_> = all
+    let outcome = hybrid::search_with(well, &query, requested, MAX_SCAN, semantic.embedder());
+    let effective = outcome.mode;
+    // The store knows *that* the index couldn't answer; this process often
+    // knows the better *why* (no model on this machine, no semantic build), so
+    // prefer it and fall back to the store's reason.
+    let degraded = outcome
+        .degraded
+        .map(|store_reason| semantic.unavailable().unwrap_or(store_reason));
+
+    let matching: Vec<_> = outcome
+        .hits
         .into_iter()
         .filter(|h| wanted.is_none_or(|k| h.kind == k))
-        .take(limit)
         .collect();
+    let scanned = matching.len();
+    let hits: Vec<_> = matching.into_iter().take(limit).collect();
 
     let needle = query.to_lowercase();
     // Only fetched when a task hit needs its body/tags counted.
@@ -379,15 +435,18 @@ pub fn search(well: &str, p: SearchParams) -> Result<String, String> {
 
     let scope = wanted.map_or_else(|| "all sections".to_string(), |k| format!("{k}s only"));
     let mut out = format!(
-        "# search: \"{query}\" — {} hit(s), {scope} (keyword search)\n\n",
-        hits.len()
+        "# search: \"{query}\" — {} hit(s), {scope} ({} search)\n\n",
+        hits.len(),
+        effective.as_str()
     );
-    if hits.is_empty() {
+    if let Some(reason) = &degraded {
         let _ = writeln!(
             out,
-            "Nothing matched. This is substring matching, not semantic: try a shorter or more \
-             literal term, a different spelling, or `list_entries` to see what the well contains."
+            "semantic index unavailable: {reason} — keyword results.\n"
         );
+    }
+    if hits.is_empty() {
+        let _ = writeln!(out, "{}", nothing_matched(effective));
         return Ok(out);
     }
 
@@ -414,19 +473,7 @@ pub fn search(well: &str, p: SearchParams) -> Result<String, String> {
         if !hit.snippet.is_empty() {
             let _ = writeln!(out, "   > {}", hit.snippet);
         }
-        // The store ranks a title match above any number of body matches, so
-        // say which one this is — otherwise "0 occurrences" at rank 1 reads
-        // like a bug rather than a title hit.
-        let _ = writeln!(
-            out,
-            "   {}{} occurrence(s) in the body\n",
-            if hit.title.to_lowercase().contains(&needle) {
-                "title match; "
-            } else {
-                ""
-            },
-            occurrences(&body, &needle)
-        );
+        let _ = writeln!(out, "   {}\n", why_it_matched(hit, &body, &needle));
     }
 
     let _ = writeln!(
@@ -441,6 +488,38 @@ pub fn search(well: &str, p: SearchParams) -> Result<String, String> {
         );
     }
     Ok(out)
+}
+
+/// The advice to give when a search came back empty — which differs by mode:
+/// under keyword the fix is usually a different literal word, under
+/// semantic/hybrid it is usually that the well genuinely doesn't hold this.
+fn nothing_matched(mode: SearchMode) -> &'static str {
+    match mode {
+        SearchMode::Keyword => {
+            "Nothing matched. This is substring matching, not semantic: try a shorter or more \
+             literal term, a different spelling, or `mode=\"hybrid\"` to search by meaning too. \
+             `list_entries` shows what the well actually contains."
+        }
+        _ => {
+            "Nothing matched, by wording or by meaning. Try a different angle on the topic, or \
+             `list_entries` to see what the well actually contains — it may simply not be here."
+        }
+    }
+}
+
+/// One line explaining why a hit is in the list. The store ranks a title match
+/// above any number of body matches, and a semantic hit may contain the query's
+/// words nowhere at all — saying which is which keeps "0 occurrence(s)" at rank
+/// 1 from reading like a bug.
+fn why_it_matched(hit: &ido_store::model::SearchHit, body: &str, needle: &str) -> String {
+    if hit.title.to_lowercase().contains(needle) {
+        let count = occurrences(body, needle);
+        return format!("title match; {count} occurrence(s) in the body");
+    }
+    match occurrences(body, needle) {
+        0 => "no literal match — retrieved by meaning".to_string(),
+        count => format!("{count} occurrence(s) in the body"),
+    }
 }
 
 // --- 3. get_entry -----------------------------------------------------------

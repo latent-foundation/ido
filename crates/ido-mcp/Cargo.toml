@@ -9,7 +9,13 @@ edition = "2024"
 [features]
 # Semantic + hybrid search (P2): forwards the store's feature, pulling in the
 # candle embedding stack. Off by default so the default build stays a 3-crate
-# add; the shipped sidecar builds with it on.
+# add.
+#
+# The shipped sidecar is still built **without** it — see the note on `just
+# sidecar` in the justfile. Short version: the app has no model-download UI
+# yet (P3), so a semantic sidecar could never obtain the weights and would
+# degrade to keyword anyway, while the candle release build lands on every
+# `just dev`. Flip it on in the same change that ships the download UI.
 semantic = ["ido-store/semantic"]
 
 [dependencies]
@@ -40,6 +46,12 @@ chrono = "0.4"
 # The integration test drives the built binary as a real MCP server: rmcp's
 # client half plus the child-process (stdio) transport.
 rmcp = { version = "3.1", features = ["client", "transport-child-process"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process"] }
+# `time` is for the one test that waits on the detached startup index sweep.
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "process",
+    "time",
+] }
 # Seeding a throwaway well through the same store the server reads.
 tempfile = "3"

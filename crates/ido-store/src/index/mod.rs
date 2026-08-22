@@ -22,12 +22,17 @@
 //! - [`fusion`] — reciprocal rank fusion, `k = 60`, never tuned
 //! - [`store`] — the on-disk index + incremental (manifest-driven) rebuild +
 //!   cosine top-k
+//! - [`hybrid`] — the three retrieval modes over one [`crate::model::SearchHit`]
+//!   shape, plus the degradation contract every caller reports
+//! - [`eval`] — the query set, recall@5 / MRR, and §6.7's gate
 //! - [`candle`] *(feature `semantic`)* — the real embedder
 //! - [`download`] *(feature `semantic`)* — the one-time model fetch + cache
 
 pub mod chunk;
 pub mod embed;
+pub mod eval;
 pub mod fusion;
+pub mod hybrid;
 pub mod store;
 
 #[cfg(feature = "semantic")]

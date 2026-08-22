@@ -188,8 +188,12 @@ async fn serves_the_seven_read_only_tools_over_stdio() {
     // --- well_info: the shape of the well, and which search mode is live ----
     let info = ok_text(&client, "well_info", json!({})).await;
     assert!(
-        info.contains("keyword-only (semantic index not built)"),
-        "well_info must be honest about the search mode:\n{info}"
+        info.contains("- semantic index: not built"),
+        "well_info must report the index state:\n{info}"
+    );
+    assert!(
+        info.contains("- search: keyword-only"),
+        "a build with no index answers keyword-only, and says so:\n{info}"
     );
     assert!(info.contains("notes: 2 files"), "{info}");
     assert!(info.contains("wiki: 1 pages"), "{info}");
@@ -234,6 +238,51 @@ async fn serves_the_seven_read_only_tools_over_stdio() {
         bad_section.is_error,
         Some(true),
         "unknown section is rejected"
+    );
+
+    // --- search modes: every mode answers, and never overstates itself ------
+    for mode in ["hybrid", "semantic", "keyword"] {
+        let rendered = ok_text(&client, "search", json!({ "query": TOKEN, "mode": mode })).await;
+        assert!(
+            rendered.contains("rotate-the-zarquon-keys"),
+            "`{mode}` must still find the literal token:\n{rendered}"
+        );
+        // This build has no index, so hybrid/semantic degrade — and must say
+        // so rather than let an empty answer read as "the well has nothing".
+        if mode == "keyword" {
+            assert!(
+                rendered.contains("(keyword search)"),
+                "the heading names the mode that ran:\n{rendered}"
+            );
+            assert!(
+                !rendered.contains("semantic index unavailable"),
+                "keyword never asked for the index:\n{rendered}"
+            );
+        } else {
+            assert!(
+                rendered.contains("semantic index unavailable:"),
+                "`{mode}` degraded silently:\n{rendered}"
+            );
+            assert!(
+                rendered.contains("keyword results"),
+                "a degraded response says what it *is*:\n{rendered}"
+            );
+            assert!(
+                rendered.contains("(keyword search)"),
+                "and the heading names the mode that actually ran:\n{rendered}"
+            );
+        }
+    }
+    let bad_mode = call(
+        &client,
+        "search",
+        json!({ "query": "a", "mode": "psychic" }),
+    )
+    .await;
+    assert_eq!(
+        bad_mode.is_error,
+        Some(true),
+        "an unknown mode is an error, not a silent default"
     );
 
     // --- list_entries: the cheap map, with round-tripping ids ---------------
@@ -338,14 +387,77 @@ async fn serves_the_seven_read_only_tools_over_stdio() {
 
 /// The well must be exactly as it was found: a read-only server that scaffolds,
 /// migrates or sweeps on open would silently rewrite a user's folder.
+///
+/// This is the **default-feature** build, which has no embedder at all — so the
+/// bar is absolute: not one byte, anywhere, including `.ido/`.
+#[cfg(not(feature = "semantic"))]
 #[tokio::test]
 async fn serving_a_well_writes_nothing() {
     let well = seed_well();
     let before = snapshot(well.path());
+    exercise(&well).await;
+    assert_eq!(before, snapshot(well.path()), "the well was modified");
+}
 
-    let client = connect(&well).await;
+/// With semantic search compiled in, §6.6 sanctions exactly one write: the
+/// rebuildable index cache under `.ido/index/`. **Well content is still
+/// untouchable.**
+///
+/// On a machine without the model this passes trivially (nothing is written at
+/// all, because nothing can embed) — which is itself the contract worth
+/// pinning: an absent model must never turn into a half-built index or a
+/// scaffolded well.
+#[cfg(feature = "semantic")]
+#[tokio::test]
+async fn serving_a_well_writes_only_the_index_cache() {
+    let well = seed_well();
+    let before = snapshot(well.path());
+    exercise(&well).await;
+    // The startup sweep is detached; give it a moment to land before looking.
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    let after = snapshot(well.path());
+
+    let changed: Vec<&(String, u64)> = after.iter().filter(|e| !before.contains(e)).collect();
+    for (path, _) in &changed {
+        assert!(
+            path.starts_with(".ido/index/"),
+            "only the rebuildable index cache may be written, but `{path}` changed"
+        );
+    }
+    let content_before: Vec<_> = before
+        .iter()
+        .filter(|(p, _)| !p.starts_with(".ido/index/"))
+        .collect();
+    let content_after: Vec<_> = after
+        .iter()
+        .filter(|(p, _)| !p.starts_with(".ido/index/"))
+        .collect();
+    assert_eq!(content_before, content_after, "well content was modified");
+    eprintln!(
+        "index files written: {}",
+        if changed.is_empty() {
+            "none (no model on this machine — the degradation path)".to_string()
+        } else {
+            changed
+                .iter()
+                .map(|(p, _)| p.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    );
+}
+
+/// Drive one session's worth of reads across every tool that touches disk.
+async fn exercise(well: &TempDir) {
+    let client = connect(well).await;
     let _ = ok_text(&client, "well_info", json!({})).await;
     let _ = ok_text(&client, "search", json!({ "query": TOKEN })).await;
+    let _ = ok_text(
+        &client,
+        "search",
+        json!({ "query": TOKEN, "mode": "semantic" }),
+    )
+    .await;
     let _ = ok_text(&client, "list_tasks", json!({})).await;
     let _ = ok_text(
         &client,
@@ -354,8 +466,6 @@ async fn serving_a_well_writes_nothing() {
     )
     .await;
     client.cancel().await.expect("shutdown");
-
-    assert_eq!(before, snapshot(well.path()), "the well was modified");
 }
 
 /// Every file under `root`, as sorted `(relative path, length)` pairs.
