@@ -600,7 +600,7 @@ user-triggered, and it must be reported as such in the UI.
 | Concern | Assessment |
 |---|---|
 | **Inference speed** | Candle CPU is generally **slower than ORT** for BERT — call it 1.5–3× until measured. It does not matter for queries (one short text, single-digit to low-tens ms) and it does matter for a cold index build. Measure it (§10) |
-| **Cold index build** | The real exposure. 5,000 chunks × ~450 tokens on CPU is plausibly 1–5 min. Mitigations, in order: batch properly, `rayon` across batches, then the `metal`/`accelerate` features, then a smaller model. Build once in the background, incrementally thereafter (§6.6) — a user should meet this exactly once |
+| **Cold index build** | The real exposure, and the estimate that was wrong. ~~Plausibly 1–5 min~~ — **measured 4.16 chunks/sec** (release, 6-core CPU, ~430-token chunks, batches parallelised with `rayon`), so 5,000 chunks is **~20 min**; ~50 min without the `rayon` layer. Proper batching and `rayon` across batches are both in. What remains: `metal`/`accelerate` (macOS only), smaller chunks (attention is quadratic, so this pays superlinearly), or a smaller model. The design mitigation is what keeps this acceptable — build once in the background, incrementally thereafter (§6.6), so a user meets it exactly once |
 | **Compile time** | **Measured: 2m09s cold** for the 185-crate candle tree (§11.4). Gate the whole index module behind a **`semantic` cargo feature** on `ido-store` so `src-tauri`, `just verify`, and CI stay fast when it's off |
 | **Binary size** | **Measured: 5.1 MB linked / 4.1 MB stripped** (§11.4). Model weights live in the on-disk cache, never in the executable |
 | **Dependency count** | **+82 crates**, of which 79 are the candle stack and 3 are rmcp — see §11 |
@@ -696,6 +696,14 @@ Without an eval, "semantic search" is vibes. Build the smallest useful harness:
 - Gate: hybrid must beat keyword-only on recall@5 and must not regress the exact-identifier
   queries. If it doesn't, the chunking is wrong — fix that before touching models or `k`.
 
+**Built and passing** (`just eval`; results in §7's P2 entry). 31 queries over a 53-entry fixture
+well at `crates/ido-store/tests/fixtures/eval-well/`, whose `README.md` documents the schema and
+the invariants that keep the set honest — paraphrase queries share *zero* content words with their
+targets, and an archived task is a negative control that must never be retrieved. The gate lives
+in `index::eval::gate` and is enforced by `--eval`'s exit code. It compares hybrid against keyword
+only: hybrid *tying* keyword on the identifier class is a pass, since that is exactly the class
+where the vector half is expected to be the weaker one.
+
 ---
 
 ## 7. Phases
@@ -716,7 +724,7 @@ lexical scan. Registered in `.mcp.json`, driven from Claude Code against a real 
 running; tool results stay under budget on a large well; a `just mcp` recipe runs it. Resources
 (§5.3) ship in P4; `search` omits the `mode` parameter until P2 adds semantic support.
 
-### P2 — Semantic index
+### P2 — Semantic index — **DONE 2026-08-22**
 
 Chunker, the candle embedder (`ModelSpec` registry + pooling + prefixes), model download,
 `vectors.bin` + manifest, brute-force cosine, RRF fusion, the eval harness. All behind the
@@ -724,6 +732,45 @@ Chunker, the candle embedder (`ModelSpec` registry + pooling + prefixes), model 
 degradation to keyword when the model is absent or the feature is off.
 **Done when:** hybrid beats keyword on the eval set, the known-vector test pins the embedder, a
 cold index builds in a few minutes on a 2,000-note well, and a warm query is imperceptible.
+
+**As built.** Three of those four bars are cleared; the fourth is missed, and measured, below.
+
+Retrieval over the committed 53-entry eval well (`just eval`, cells are `recall@5 / MRR`):
+
+| class | queries | keyword | semantic | hybrid |
+|---|---|---|---|---|
+| cross-section | 8 | 0.667 / 0.688 | 0.917 / 1.000 | 0.917 / 0.938 |
+| identifier | 9 | 1.000 / 0.944 | 0.889 / 0.889 | 1.000 / 0.944 |
+| paraphrase | 14 | **0.000 / 0.000** | 0.929 / 0.729 | 0.929 / 0.729 |
+| **overall** | 31 | 0.462 / 0.452 | 0.914 / 0.845 | **0.946 / 0.845** |
+
+That paraphrase row is this phase's entire argument, as a number: the lexical scan finds **none**
+of the 14 queries whose wording shares no content word with its target. The identifier row is the
+argument for *hybrid* over *semantic* — pure vectors drop to 0.889 there while fusion keeps
+keyword's 1.000. Neither half is sufficient alone, exactly as §6.5 claims.
+
+- **Known-vector gate (§10.1) — passes at 1.6e-7** max abs component diff against
+  `sentence-transformers`, three orders of magnitude inside the 1e-4 bar. Candle reproduces BGE.
+  Reference vectors and their generator (`scripts/gen_known_vectors.py`) are committed; the model
+  revision and a sha256 per file are pinned in the `ModelSpec`.
+- **Warm query: imperceptible** — ~25 ms end-to-end, dominated by the query's own forward pass.
+  The brute-force cosine sweep is noise beside it, as §6.4 predicted.
+- **Cold index build: misses the bar — ~20 min for 5,000 chunks, not "a few minutes".** Measured
+  4.16 chunks/sec (release, 6-core CPU, ~430-token chunks), corroborated by a real rebuild of the
+  eval well: 108 chunks across 51 files in 26 s. See the corrected row in §6.3's honest costs.
+
+Two things surfaced in the build that the plan did not anticipate:
+
+- **`rayon` across batches is required, not optional.** Candle's own gemm threading barely engages
+  at this model's matrix widths — a serial build used 1–2 of 12 hardware threads, and
+  `RAYON_NUM_THREADS` changed nothing. Parallelising whole forward passes
+  (`par_chunks(MAX_BATCH)`) is a **2.5× speedup** (1.66 → 4.16 chunks/sec), and is the difference
+  between ~20 minutes and ~50. §6.3 listed it first among the mitigations; it proved to be the
+  only one that pays without a quality trade.
+- **The lexical scan never recursed `wiki/` folders.** A pre-existing bug — `search.rs` walked
+  only the section's top level — so a page in a cosmetic folder was invisible to the palette *and*
+  to MCP `search`. Fixed, with a regression test. Hybrid forced the issue: a fused ranking is only
+  meaningful when both halves see the same corpus.
 
 ### P3 — Packaging + in-app surface
 
@@ -791,7 +838,13 @@ seriously:
 
 ## 10. Open questions — resolve with spikes, not opinions
 
-1. **Does candle reproduce the reference embeddings?** Everything downstream is worthless if the
+1. ~~**Does candle reproduce the reference embeddings?**~~ **Resolved 2026-08-22: yes, to 1.6e-7.**
+   The spike below was built as described and committed as `crates/ido-store/tests/known_vector.rs`
+   (`#[ignore]`d — it needs the downloaded model), with `scripts/gen_known_vectors.py` generating
+   the reference. It also covers the query-prefix trap: Python embeds the prefixed string
+   literally, Rust embeds the bare query with `Role::Query`, and the two agree — so the prefix is
+   provably applied, not merely intended. The original question follows.
+   Everything downstream is worthless if the
    vectors are subtly wrong. *Spike: a 60-line binary that loads `bge-small-en-v1.5`, embeds a
    fixed string with CLS pooling + L2 norm, and diffs against the vector `sentence-transformers`
    produces in Python. Within 1e-4 ⇒ commit it as the known-vector test.* **This gates P2** — and
@@ -803,7 +856,12 @@ seriously:
 3. **Chunk size.** 450 tokens with 15% overlap is a starting guess. The eval set decides.
 4. **Where in-app semantic search lands** — does the palette become hybrid, or does semantic get a
    separate mode? Product question; P3.
-5. **Index-build throughput, and whether Metal is worth it.** *Spike: time a 5,000-chunk build on
+5. **Index-build throughput, and whether Metal is worth it.** *Partly answered (Windows/CPU):*
+   4.16 chunks/sec with `rayon` across batches, 1.66 without — candle's internal threading never
+   engaged, so the parallelism had to come from above it. 5,000 chunks ≈ 20 min. That is **not**
+   "already a couple of minutes", so the Metal / `accelerate` question stays genuinely open for
+   the macOS build rather than being skippable. It did not block P2, because the cost is one-time,
+   backgrounded and incremental thereafter. The original question follows. *Spike: time a 5,000-chunk build on
    the CPU build, then with `--features metal` and with `accelerate`, on the same Mac.* If CPU is
    already a couple of minutes, ship CPU-only and skip the per-platform feature matrix entirely.
    Candle's Metal backend has thinner op coverage than its CPU one — a fallback path must exist,
@@ -951,20 +1009,29 @@ copy-pastable snippet pointing at it, since the binary is not on `PATH`.
 
 ## Appendix B — commands this adds
 
-### Exist (P0 + P1 + P3 slice)
+### Exist (P0 + P1 + P2 + P3 slice)
 ```sh
 just mcp                    # run ido-mcp against the most recent well, stderr to terminal
 just mcp-inspect            # run under the MCP inspector for protocol-level debugging
 just sidecar                # build release ido-mcp and stage as Tauri sidecar binary
-cargo test -p ido-store     # the real store test suite (81 tests, moved from -p ido)
-cargo test -p ido-mcp       # unit + stdio integration tests (14 tests)
+just eval                   # score keyword/semantic/hybrid on the eval well, apply §6.7's gate
+just reindex                # rebuild the most recent well's semantic index from scratch
+cargo test -p ido-store     # the real store test suite (145 tests)
+cargo test -p ido-mcp       # unit + stdio integration tests (22 tests)
 ```
 
-### Still future (P2, P4)
+`just eval` and `just reindex` are thin wrappers over the binary's own flags, which take `--well`
+like every other invocation:
+
 ```sh
-cargo run -p ido-mcp -- --well <path> --reindex   # force a full index rebuild (P2)
-cargo run -p ido-mcp -- --eval  docs/eval.jsonl   # retrieval eval: recall@5 / MRR (P2)
+cargo run --release -p ido-mcp --features semantic -- --well <path> --reindex
+cargo run --release -p ido-mcp --features semantic -- --well <path> --eval <eval.jsonl>
 ```
+
+`--eval` exits non-zero when §6.7's gate fails, so it is CI-shaped; neither flag ever opens the
+JSON-RPC transport. **Release matters** — a debug candle build makes embedding glacial.
+
+### Still future (P4)
 
 `just verify` includes `cargo test -p ido-store`, `cargo test -p ido` (2), and `cargo test -p ido-mcp`; `just dev`/`dev-debug` depend on `sidecar`; `cargo tauri build` requires `just sidecar` run first.
 

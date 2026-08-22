@@ -16,20 +16,32 @@ fmt-check:
     cargo fmt --check
     leptosfmt --check src
 
-# Type-check + lint the whole workspace, warnings as errors. Depends on
+# Type-check + lint the whole workspace, warnings as errors — twice over,
+# because `--workspace` only ever sees default features and the semantic index
+# (docs/mcp-server.md P2) is behind a cargo feature: without the second and
+# third lines the entire candle path would go unlinted. The candle tree is a
+# ~2-minute cold compile, then cached (CI keeps it in `Swatinem/rust-cache`).
+# Depends on
 # `sidecar` because compiling the `ido` (src-tauri) crate runs tauri-build,
 # which validates `bundle.externalBin` and hard-fails when the staged binary is
 # missing — as it is on any fresh clone, since src-tauri/binaries/ is gitignored.
 check: sidecar
     cargo clippy --workspace -- -D warnings
+    cargo clippy -p ido-store --features semantic --all-targets -- -D warnings
+    cargo clippy -p ido-mcp --features semantic --all-targets -- -D warnings
 
 # Backend logic tests (the store: tree / create / rename / move / delete)
 # plus the MCP server's tool rendering and its end-to-end stdio test.
+# The last two lines cover the semantic index. Tests that need the embedding
+# model on disk are `#[ignore]`d (they would download ~133 MB), so these stay
+# offline and fast — run them by hand with `--ignored` after `just eval`.
 # Needs `sidecar` for the same reason `check` does (`cargo test -p ido`).
 test: sidecar
     cargo test -p ido-store
     cargo test -p ido
     cargo test -p ido-mcp
+    cargo test -p ido-store --features semantic
+    cargo test -p ido-mcp --features semantic
 
 # Exactly what CI runs. `just` runs each dependency at most once per
 # invocation, so the sidecar `check` and `test` both pull in is built once.
@@ -70,6 +82,19 @@ dev-debug: sidecar
 # for hands-on poking use `just mcp-inspect`. Add `-- --well <path>` to pin one.
 mcp:
     cargo run -p ido-mcp
+
+# Score retrieval (keyword / semantic / hybrid) over the committed eval well and
+# apply docs/mcp-server.md §6.7's gate: hybrid must not do worse than keyword on
+# recall@5, overall or on the exact-identifier queries. Exits non-zero when the
+# gate fails. Release, because a debug candle build makes embedding glacial; the
+# model must already be downloaded (`--reindex` or the app's settings pane).
+eval:
+    cargo run --release -p ido-mcp --features semantic -- --well crates/ido-store/tests/fixtures/eval-well --eval crates/ido-store/tests/fixtures/eval-well/eval.jsonl
+
+# Rebuild the semantic index of the most recent well from scratch, then exit.
+# Add `-- --well <path>` to pin one. Downloads the embedding model on first run.
+reindex:
+    cargo run --release -p ido-mcp --features semantic -- --reindex
 
 # Run ido-mcp under the MCP inspector for protocol-level debugging (needs Node).
 mcp-inspect:
