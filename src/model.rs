@@ -156,6 +156,82 @@ pub struct McpInfo {
     pub cli: String,
 }
 
+/// The state of a well's semantic index — mirrors the backend `IndexStatus`.
+/// `None` on the [`SemanticInfo`] means no index has been built for this well.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct IndexStatus {
+    /// The embedding model that built it. A different live model forces a
+    /// rebuild rather than mixing vector spaces.
+    pub model: String,
+    /// Vector width.
+    pub dim: usize,
+    /// Chunks indexed.
+    pub chunks: usize,
+    /// Markdown files covered.
+    pub files: usize,
+    /// When it was last built, epoch ms.
+    pub built_ms: u64,
+    /// Whether a well file has changed since — the index still answers, but a
+    /// rebuild is due.
+    pub stale: bool,
+}
+
+/// Whether semantic search can run, what enabling it would cost, and the state
+/// of this well's index — mirrors the backend `SemanticInfo`.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SemanticInfo {
+    /// True when a query could be answered semantically right now.
+    pub available: bool,
+    /// Why not, when it can't — shown to the user verbatim.
+    pub reason: Option<String>,
+    /// Whether this build has semantic support compiled in at all.
+    pub supported: bool,
+    /// The embedding model's id (its HuggingFace repo).
+    pub model: String,
+    /// Whether the weights are already on disk.
+    pub model_present: bool,
+    /// What downloading them would cost, in bytes.
+    pub download_bytes: u64,
+    /// Where the weights live (or would) on this machine.
+    pub model_dir: Option<String>,
+    /// This well's index, when one has been built.
+    pub index: Option<IndexStatus>,
+}
+
+/// A background job's progress — mirrors the backend `JobStatus`. The model
+/// download and the index build share one slot; only one runs at a time.
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct JobStatus {
+    /// `""` when idle, else `"download"` or `"index"`.
+    pub kind: String,
+    /// Human-readable phase, shown verbatim.
+    pub phase: String,
+    /// Progress numerator — bytes downloading, chunks indexing.
+    pub done: u64,
+    /// Denominator, or `0` while unknown.
+    pub total: u64,
+    /// True while the job is running.
+    pub running: bool,
+    /// Why the last job failed, until the next one starts.
+    pub error: Option<String>,
+    /// Bumped once per finished job, so a poller can refresh derived state
+    /// exactly once instead of on every tick.
+    pub generation: u64,
+}
+
+/// Ranked hits plus **which retrieval actually ran** — mirrors the backend
+/// `SearchResponse`. The palette shows a semantic badge only when `mode` says
+/// so, never merely because it asked.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SearchResponse {
+    /// Ranked hits, same shape as the keyword `search` command's.
+    pub hits: Vec<SearchHit>,
+    /// `"hybrid"`, `"semantic"`, or `"keyword"`.
+    pub mode: String,
+    /// Why the requested mode could not run, when it could not.
+    pub degraded: Option<String>,
+}
+
 /// One entry in a well's tree: a folder (with `children`) or a note.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TreeNode {

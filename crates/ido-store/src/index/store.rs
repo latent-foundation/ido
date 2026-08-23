@@ -27,6 +27,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
@@ -411,8 +412,25 @@ enum Plan {
 /// whose `model`/`dim`/`schema` disagree with `embedder` forces a full
 /// rebuild. Takes the advisory lock; if another process holds a fresh lock,
 /// returns `Err` without touching anything (callers answer from the stale
-/// index instead).
+/// index instead). Delegates to [`update_index_with_progress`] with a no-op
+/// callback.
 pub fn update_index(well: &str, embedder: &dyn Embedder) -> Result<IndexStatus, String> {
+    update_index_with_progress(well, embedder, &|_, _| {})
+}
+
+/// [`update_index`], reporting embedding progress as it goes:
+/// `on_progress(chunks embedded, chunks to embed)` fires as batches complete
+/// — from whichever thread(s) [`Embedder::embed_with_progress`] uses, so it
+/// must tolerate concurrent calls (its type already requires `Sync`). A
+/// final `(total, total)` tick always fires, even when nothing needed
+/// embedding, so a progress UI is guaranteed to land on 100%. Every other
+/// guarantee — the lock, the diff, the atomic write order — is identical to
+/// `update_index`.
+pub fn update_index_with_progress(
+    well: &str,
+    embedder: &dyn Embedder,
+    on_progress: &(dyn Fn(usize, usize) + Sync),
+) -> Result<IndexStatus, String> {
     let _guard = acquire_lock(well)?;
 
     let walked = collect_chunks(well);
@@ -478,13 +496,28 @@ pub fn update_index(well: &str, embedder: &dyn Embedder) -> Result<IndexStatus, 
         plans.push((path, plan));
     }
 
-    // One batch call for everything that needs embedding — the embedder
-    // batches internally.
+    // One call for everything that needs embedding — the embedder batches
+    // internally, and `on_progress` accumulates across whichever batches (and
+    // threads) it reports on.
+    let total_to_embed = embed_queue.len();
     let embedded = if embed_queue.is_empty() {
         Vec::new()
     } else {
-        embedder.embed(&embed_queue, Role::Document)?
+        // Announce the denominator before any work starts. Everything up to
+        // here — walking, chunking, hashing — reports nothing, so without this
+        // tick a caller has no count to show until the first batch lands, which
+        // on a large well is a long silence with no sign of progress.
+        on_progress(0, total_to_embed);
+        let completed = AtomicUsize::new(0);
+        let report = |n: usize| {
+            let done = completed.fetch_add(n, Ordering::SeqCst) + n;
+            on_progress(done, total_to_embed);
+        };
+        embedder.embed_with_progress(&embed_queue, Role::Document, &report)?
     };
+    // Always land on 100%, even when nothing needed embedding — a caller
+    // must never be left hanging on a stale in-progress percentage.
+    on_progress(total_to_embed, total_to_embed);
     let mut embedded = embedded.into_iter();
 
     let dim = embedder.dim();
@@ -1074,6 +1107,72 @@ mod tests {
             embedder.count(),
             total_chunks,
             "a model swap re-embeds every chunk, not just changed files"
+        );
+    }
+
+    // --- progress reporting ---------------------------------------------
+
+    #[test]
+    fn update_index_with_progress_lands_on_the_full_embed_count() {
+        let (_d, w) = well();
+        write(&w, "notes/a.md", "alpha content one");
+        write(&w, "notes/b.md", "beta content two");
+
+        let seen: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mutex::new(Vec::new());
+        let on_progress = |done: usize, total: usize| seen.lock().unwrap().push((done, total));
+        let status =
+            update_index_with_progress(&w, &FakeEmbedder::default(), &on_progress).unwrap();
+
+        let calls = seen.lock().unwrap();
+        let (last_done, last_total) = *calls.last().expect("at least the final tick fires");
+        assert_eq!(last_done, last_total, "must land on 100%");
+        assert_eq!(
+            last_total, status.chunks,
+            "a fresh build embeds every chunk it ends up with"
+        );
+    }
+
+    #[test]
+    fn update_index_with_progress_on_an_unchanged_well_still_ticks_zero_zero() {
+        let (_d, w) = well();
+        write(&w, "notes/a.md", "alpha content");
+        update_index(&w, &FakeEmbedder::default()).unwrap();
+
+        let seen: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mutex::new(Vec::new());
+        let on_progress = |done: usize, total: usize| seen.lock().unwrap().push((done, total));
+        update_index_with_progress(&w, &FakeEmbedder::default(), &on_progress).unwrap();
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![(0, 0)],
+            "nothing changed, so the only tick is the unconditional final one"
+        );
+    }
+
+    #[test]
+    fn update_index_with_progress_incremental_reports_only_the_changed_files_chunks() {
+        let (_d, w) = well();
+        write(&w, "notes/a.md", "alpha content one");
+        write(&w, "notes/b.md", "beta content two");
+        update_index(&w, &FakeEmbedder::default()).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write(
+            &w,
+            "notes/b.md",
+            "beta content two, revised with more words",
+        );
+
+        let seen: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mutex::new(Vec::new());
+        let on_progress = |done: usize, total: usize| seen.lock().unwrap().push((done, total));
+        update_index_with_progress(&w, &FakeEmbedder::default(), &on_progress).unwrap();
+
+        let calls = seen.lock().unwrap();
+        let (last_done, last_total) = *calls.last().unwrap();
+        assert_eq!(last_done, last_total);
+        assert_eq!(
+            last_total, 1,
+            "only b's one changed chunk should be reported as embedded, not a's untouched one"
         );
     }
 

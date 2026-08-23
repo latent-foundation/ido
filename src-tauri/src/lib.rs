@@ -13,11 +13,14 @@
 //! - [`external`] — opening URLs in the OS
 //! - [`mcp`] — resolving the bundled `ido-mcp` sidecar and building the
 //!   settings pane's copy-paste MCP client config
+//! - [`semantic`] — in-app semantic search: the model download, the index
+//!   build, and hybrid queries (docs/mcp-server.md P3)
 
 mod commands;
 mod external;
 mod mcp;
 mod registry;
+mod semantic;
 mod window;
 
 use tauri::Manager;
@@ -73,7 +76,6 @@ pub fn run() {
             commands::rename_task,
             commands::delete_task,
             commands::restore_task,
-            commands::search,
             commands::list_goals,
             commands::create_goal,
             commands::reorder_goals,
@@ -92,7 +94,12 @@ pub fn run() {
             window::win_toggle_maximize,
             window::win_close,
             external::open_external,
-            mcp::mcp_info
+            mcp::mcp_info,
+            semantic::semantic_info,
+            semantic::download_model,
+            semantic::build_index,
+            semantic::job_status,
+            semantic::search_hybrid
         ])
         // Persist the window geometry on close — the reliable capture point for
         // position (the OS gives no move event the frontend can hook), covering

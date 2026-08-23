@@ -27,6 +27,8 @@
 //! - [`eval`] — the query set, recall@5 / MRR, and §6.7's gate
 //! - [`candle`] *(feature `semantic`)* — the real embedder
 //! - [`download`] *(feature `semantic`)* — the one-time model fetch + cache
+//! - [`engine`] *(feature `semantic`)* — the process-wide embedder handle
+//!   (load-once, never-download), shared by `ido-mcp` and (P3) the app
 
 pub mod chunk;
 pub mod embed;
@@ -39,6 +41,8 @@ pub mod store;
 pub mod candle;
 #[cfg(feature = "semantic")]
 pub mod download;
+#[cfg(feature = "semantic")]
+pub mod engine;
 
 pub use store::index_status;
 

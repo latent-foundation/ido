@@ -54,15 +54,21 @@ verify: fmt-check check test
 # not just a bundle: `check`, `test`, `dev` and `dev-debug` all depend on this
 # recipe. `cargo tauri build` needs it too but isn't a just recipe here, so run
 # `just sidecar` before it by hand.
+#
+# Built **with `--features semantic`** since P3: the app's settings pane can now
+# fetch the embedding model into the per-machine cache at
+# `<data_dir>/latent.ido/models/`, and the sidecar reads that same cache — so a
+# semantic sidecar can actually obtain weights rather than silently degrading to
+# keyword. Costs a one-time ~2-minute candle release build, cached thereafter.
 [windows]
 sidecar:
-    cargo build --release -p ido-mcp
+    cargo build --release -p ido-mcp --features semantic
     New-Item -ItemType Directory -Force -Path src-tauri/binaries | Out-Null
     $triple = ((rustc -vV | Select-String '^host:') -replace 'host:\s*', '').Trim(); Copy-Item -Force target/release/ido-mcp.exe "src-tauri/binaries/ido-mcp-$triple.exe"
 
 [unix]
 sidecar:
-    cargo build --release -p ido-mcp
+    cargo build --release -p ido-mcp --features semantic
     mkdir -p src-tauri/binaries
     triple=$(rustc -vV | grep '^host:' | awk '{print $2}') && cp target/release/ido-mcp "src-tauri/binaries/ido-mcp-$triple"
 
@@ -82,6 +88,13 @@ dev-debug: sidecar
 # for hands-on poking use `just mcp-inspect`. Add `-- --well <path>` to pin one.
 mcp:
     cargo run -p ido-mcp
+
+# Same, with the four write tools live (docs/mcp-server.md §8). Pointed at the
+# committed dev-well fixture on purpose: writes land in scratch data you can
+# throw away, not in whatever well you last had open. Add `-- --well <path>` to
+# aim it somewhere else, deliberately.
+mcp-write:
+    cargo run -p ido-mcp -- --well dev-well --allow-write
 
 # Score retrieval (keyword / semantic / hybrid) over the committed eval well and
 # apply docs/mcp-server.md §6.7's gate: hybrid must not do worse than keyword on

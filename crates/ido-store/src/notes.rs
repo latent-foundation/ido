@@ -10,7 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::model::{NoteMeta, Section, TreeNode};
 use crate::paths::{
-    join_rel, note_path, parent_of, rel_path, section_dir, unique_name, valid_name,
+    append_text, confined, join_rel, note_path, parent_of, rel_path, section_dir, unique_name,
+    valid_name,
 };
 
 /// Recursively read `dir` into [`TreeNode`]s (folders first, then notes, each
@@ -124,6 +125,58 @@ pub fn create_note(well: String, parent: String) -> Result<String, String> {
     let stem = unique_name(&dir, "untitled", "md");
     fs::write(dir.join(format!("{stem}.md")), "").map_err(|e| e.to_string())?;
     Ok(join_rel(&parent, &stem))
+}
+
+/// Create a note at `id` with `content`, never overwriting an existing one:
+/// where [`write_note`] always overwrites (fine for the app, where the user
+/// is looking at the note they're editing), this is the MCP-facing
+/// create-or-uniquify half — an agent must never be able to clobber a note
+/// it didn't know existed (see `docs/mcp-server.md` §8).
+///
+/// `id` may carry folders (`"projects/auth"`); only the **final segment**
+/// uniquifies with `-N` (the same scheme as [`create_note`], via
+/// [`unique_name`]) — a taken parent folder is honoured exactly, not
+/// renamed. Missing parent folders are created as needed, and the folder
+/// portion is confirmed to resolve inside the well via [`confined`] first
+/// (catches a symlinked folder that walks out, which rejecting `..` in the
+/// id string alone cannot). Returns the id actually written.
+pub fn create_note_at(well: String, id: String, content: String) -> Result<String, String> {
+    let parent = parent_of(&id);
+    let leaf = valid_name(id.rsplit('/').next().unwrap_or(&id))?.to_string();
+    confined(&well, Section::Notes, &parent)?;
+    let root = section_dir(&well, Section::Notes);
+    let dir = if parent.is_empty() {
+        root
+    } else {
+        root.join(&parent)
+    };
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let stem = unique_name(&dir, &leaf, "md");
+    fs::write(dir.join(format!("{stem}.md")), content).map_err(|e| e.to_string())?;
+    Ok(join_rel(&parent, &stem))
+}
+
+/// Append `text` to the note at `id`, creating it (and any missing parent
+/// folders) when it doesn't exist yet. The append never overwrites what's
+/// already there — see [`crate::paths::append_text`] for the exact separator
+/// rule. `id`'s folder portion is confined the same way as
+/// [`create_note_at`]. Returns `id` unchanged (a note's id never moves for
+/// an append).
+pub fn append_note(well: String, id: String, text: String) -> Result<String, String> {
+    let parent = parent_of(&id);
+    let leaf = valid_name(id.rsplit('/').next().unwrap_or(&id))?.to_string();
+    confined(&well, Section::Notes, &parent)?;
+    let root = section_dir(&well, Section::Notes);
+    let dir = if parent.is_empty() {
+        root
+    } else {
+        root.join(&parent)
+    };
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{leaf}.md"));
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    fs::write(path, append_text(&existing, &text)).map_err(|e| e.to_string())?;
+    Ok(id)
 }
 
 /// Create a uniquely-named folder in `parent` (`""` = root). Returns its id.
@@ -344,5 +397,46 @@ mod tests {
 
         // a folder can't be moved into itself
         assert!(move_entry(w.clone(), folder.clone(), true, folder).is_err());
+    }
+
+    #[test]
+    fn create_note_at_uniquifies_instead_of_overwriting() {
+        let (_d, w) = well();
+        let id = create_note_at(w.clone(), "hello".into(), "original".into()).unwrap();
+        assert_eq!(id, "hello");
+        let id2 = create_note_at(w.clone(), "hello".into(), "different".into()).unwrap();
+        assert_eq!(id2, "hello-2");
+        // The original file's content survived untouched.
+        assert_eq!(read_note(w.clone(), "hello".into()).unwrap(), "original");
+        assert_eq!(read_note(w, "hello-2".into()).unwrap(), "different");
+    }
+
+    #[test]
+    fn create_note_at_into_new_nested_folder() {
+        let (_d, w) = well();
+        let id = create_note_at(w.clone(), "a/b/c/note".into(), "deep".into()).unwrap();
+        assert_eq!(id, "a/b/c/note");
+        assert_eq!(read_note(w, id).unwrap(), "deep");
+    }
+
+    #[test]
+    fn append_note_creates_when_missing_and_appends_when_present() {
+        let (_d, w) = well();
+        // Appending to a note that doesn't exist yet creates it.
+        let id = append_note(w.clone(), "log".into(), "first entry".into()).unwrap();
+        assert_eq!(id, "log");
+        assert_eq!(read_note(w.clone(), "log".into()).unwrap(), "first entry\n");
+
+        // A second append separates with a blank line.
+        append_note(w.clone(), "log".into(), "second entry".into()).unwrap();
+        assert_eq!(
+            read_note(w.clone(), "log".into()).unwrap(),
+            "first entry\n\nsecond entry\n"
+        );
+
+        // A folder id that doesn't exist yet is created too.
+        let nested = append_note(w.clone(), "diary/today".into(), "hi".into()).unwrap();
+        assert_eq!(nested, "diary/today");
+        assert_eq!(read_note(w, "diary/today".into()).unwrap(), "hi\n");
     }
 }

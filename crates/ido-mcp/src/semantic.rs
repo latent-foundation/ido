@@ -146,61 +146,26 @@ impl Semantic {
 
 // --- the two backends -------------------------------------------------------
 
-/// The real thing: a lazily-loaded candle embedder and a manifest-driven sweep.
+/// The real thing: the loaded-once candle embedder handle — now
+/// `ido_store::index::engine`, moved out of here once the desktop app became
+/// a second consumer of the exact same load-if-present/never-download
+/// contract — plus this server's own manifest-driven sweep policy, which
+/// stays put (§6.6's sweep/debounce is a serving concern, not a store one).
 #[cfg(feature = "semantic")]
 mod backend {
-    use std::sync::OnceLock;
-
-    use ido_store::index::candle::CandleEmbedder;
-    use ido_store::index::download::{model_dir, model_present};
-    use ido_store::index::embed::{DEFAULT_MODEL, Embedder};
+    use ido_store::index::embed::Embedder;
+    use ido_store::index::engine;
     use ido_store::index::store::{index_status, update_index};
 
-    /// Loaded at most once per process and kept resident for its lifetime
-    /// (§6.3: the per-call overhead dominates otherwise). One well per process,
-    /// one model per well — so a `static` is the right scope, not a field.
-    /// `Err` remembers *why* it couldn't load, so the reason survives to
-    /// `well_info` instead of becoming a bare `None`.
-    static EMBEDDER: OnceLock<Result<CandleEmbedder, String>> = OnceLock::new();
-
-    /// The message shown when the model simply isn't on this machine. Never an
-    /// auto-download: §6.3 makes the one network event in the system's life
-    /// user-triggered, and a server spawned by an MCP client is not a user.
-    fn not_downloaded() -> String {
-        format!(
-            "the embedding model `{}` is not downloaded on this machine (ido's settings \
-             pane fetches it; this server never downloads anything)",
-            DEFAULT_MODEL.repo
-        )
-    }
-
+    /// Delegates to [`engine::unavailable`] — the handle (and its
+    /// error-message logic) lives in the store now.
     pub fn unavailable() -> Option<String> {
-        match EMBEDDER.get() {
-            // Already tried: report exactly what happened.
-            Some(Err(reason)) => Some(reason.clone()),
-            Some(Ok(_)) => None,
-            // Not tried yet — answer from the files on disk rather than
-            // loading 133 MB of weights to answer a status question.
-            None if !model_present(DEFAULT_MODEL) => Some(not_downloaded()),
-            None => None,
-        }
+        engine::unavailable()
     }
 
+    /// Delegates to [`engine::embedder`].
     pub fn embedder() -> Option<&'static dyn Embedder> {
-        let loaded = EMBEDDER.get_or_init(|| {
-            if !model_present(DEFAULT_MODEL) {
-                return Err(not_downloaded());
-            }
-            let dir = model_dir(DEFAULT_MODEL)?;
-            CandleEmbedder::load(DEFAULT_MODEL, &dir)
-        });
-        match loaded {
-            Ok(embedder) => Some(embedder as &dyn Embedder),
-            Err(reason) => {
-                eprintln!("ido-mcp: semantic search unavailable: {reason}");
-                None
-            }
-        }
+        engine::embedder()
     }
 
     /// Bring `.ido/index/` up to date if it is missing or stale. Blocking, and

@@ -6,19 +6,27 @@
 //! need to be running, and the two processes share nothing but the filesystem
 //! (`docs/mcp-server.md` §3.3).
 //!
+//! Read-only is the default and the whole posture. `--allow-write` opts one
+//! process into four additional, never-destructive tools (§8); without it they
+//! are not advertised, so a client can't so much as attempt one.
+//!
 //! **stdout is the JSON-RPC channel.** Every diagnostic goes to stderr, and
 //! stays sparse: a startup line and errors, never entry bodies (§9).
 //!
 //! This module owns argument parsing, well resolution, and the two offline
-//! commands' entry points; [`server`] is the MCP layer, [`tools`] holds the
-//! tool bodies, [`semantic`] owns the embedder and index freshness, and
-//! [`maintenance`] implements `--reindex` / `--eval`.
+//! commands' entry points; [`server`] is the MCP layer, [`tools`] and [`write`]
+//! hold the tool bodies, [`resources`] and [`prompts`] hold the P4 resources
+//! and prompts surfaces (§5.3, §5.4), [`semantic`] owns the embedder and
+//! index freshness, and [`maintenance`] implements `--reindex` / `--eval`.
 
 mod maintenance;
+mod prompts;
 mod render;
+mod resources;
 mod semantic;
 mod server;
 mod tools;
+mod write;
 
 use std::path::{Path, PathBuf};
 
@@ -28,10 +36,10 @@ use rmcp::transport::stdio;
 /// `--help` output. Written to stdout, which is safe because `--help` exits
 /// before the JSON-RPC transport is ever opened.
 const USAGE: &str = "\
-ido-mcp — read-only MCP server over one ido well (stdio transport)
+ido-mcp — MCP server over one ido well (stdio transport), read-only by default
 
 USAGE:
-    ido-mcp [--well <path>]
+    ido-mcp [--well <path>] [--allow-write]
     ido-mcp [--well <path>] --reindex
     ido-mcp [--well <path>] --eval <eval.jsonl>
 
@@ -39,6 +47,12 @@ OPTIONS:
     --well <path>   The well folder to serve. Falls back to the IDO_WELL
                     environment variable, then to the most recently opened well
                     in ido's registry.
+    --allow-write   Also serve the four write tools (create_entry,
+                    append_to_entry, create_task, update_task_field). Off by
+                    default; without it they are not advertised at all, so a
+                    client cannot attempt one. Even with it, the server never
+                    deletes an entry, never overwrites or truncates a body, and
+                    edits a task one field at a time.
     --reindex       Rebuild the semantic index from scratch, print its status,
                     and exit without serving.
     --eval <path>   Score keyword / semantic / hybrid retrieval over a JSONL
@@ -48,8 +62,9 @@ OPTIONS:
     -V, --version   Print the version and exit.
 
 One well per process: register the server once per well in your MCP client.
-The server never writes or modifies well content. With semantic search active
-it maintains a rebuildable search cache under <well>/.ido/index.";
+Without --allow-write the server never writes or modifies well content. With
+semantic search active it maintains a rebuildable search cache under
+<well>/.ido/index.";
 
 /// Exit code for a usage failure, an unresolvable well, or a command this
 /// build/machine cannot run (no `semantic` feature, no downloaded model).
@@ -74,13 +89,17 @@ struct Cli {
     well: Option<PathBuf>,
     /// What to do once the well is resolved.
     action: Action,
+    /// `--allow-write` (§8). Not an [`Action`]: it modifies serving rather than
+    /// replacing it, and the offline commands ignore it.
+    allow_write: bool,
 }
 
-/// Parse the flags by hand — five do not earn a CLI-parsing dependency.
+/// Parse the flags by hand — six do not earn a CLI-parsing dependency.
 /// `--help` and `--version` exit the process directly.
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
     let mut well = None;
     let mut action = Action::Serve;
+    let mut allow_write = false;
     let set_action = |next: Action, action: &mut Action| -> Result<(), String> {
         if *action != Action::Serve {
             return Err("--reindex and --eval can't be combined".to_string());
@@ -105,6 +124,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
                     .ok_or_else(|| "--well needs a path".to_string())?;
                 well = Some(PathBuf::from(value));
             }
+            "--allow-write" => allow_write = true,
             "--reindex" => set_action(Action::Reindex, &mut action)?,
             "--eval" => {
                 let value = args
@@ -123,7 +143,11 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
             }
         }
     }
-    Ok(Cli { well, action })
+    Ok(Cli {
+        well,
+        action,
+        allow_write,
+    })
 }
 
 /// The most-recently-opened well from ido's registry, if it still exists.
@@ -184,12 +208,18 @@ fn resolve_well(flag: Option<PathBuf>) -> Result<(PathBuf, &'static str), String
 /// `.ido/well.toml`. Every store read tolerates a missing section, so an
 /// almost-a-well still answers usefully; silently pretending it's fine would
 /// not.
-fn warn_if_unscaffolded(well: &Path) {
+fn warn_if_unscaffolded(well: &Path, allow_write: bool) {
     if !well.join(".ido").join("well.toml").exists() {
         eprintln!(
             "ido-mcp: warning: `{}` has no .ido/well.toml — serving it anyway, but it may not \
-             be an ido well (this server never writes, so it will not scaffold one).",
-            well.display()
+             be an ido well ({}).",
+            well.display(),
+            if allow_write {
+                "this server never scaffolds one, so a write here would land in a folder ido \
+                 hasn't claimed"
+            } else {
+                "this server never writes, so it will not scaffold one"
+            }
         );
     }
 }
@@ -204,8 +234,9 @@ fn die(message: &str, code: i32) -> ! {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = parse_args(std::env::args().skip(1)).unwrap_or_else(|m| die(&m, EXIT_USAGE));
+    let allow_write = cli.allow_write;
     let (well, source) = resolve_well(cli.well).unwrap_or_else(|m| die(&m, EXIT_USAGE));
-    warn_if_unscaffolded(&well);
+    warn_if_unscaffolded(&well, allow_write);
 
     // The offline commands run on the blocking side of the runtime — they are
     // long, CPU-bound, and nothing else is happening — and exit when done.
@@ -225,10 +256,19 @@ async fn main() -> anyhow::Result<()> {
         Action::Serve => {}
     }
 
-    let ido = server::Ido::open(&well);
+    let ido = server::Ido::open(&well, allow_write);
+    // Line one answers "why did an agent change my notes?" without reading any
+    // further: the access mode is the first thing after the version.
     eprintln!(
-        "ido-mcp {} — serving `{}` (from {source}) read-only over stdio\n{}",
+        "ido-mcp {} — {} — serving `{}` (from {source}) over stdio\n{}",
         env!("CARGO_PKG_VERSION"),
+        if allow_write {
+            "WRITE-ENABLED (--allow-write): agents can create notes, pages and tasks, append to \
+             bodies, and set task fields in this well. It never deletes, never overwrites a body"
+        } else {
+            "READ-ONLY: no tool can create, edit or delete anything in this well (pass \
+             --allow-write to enable the four write tools)"
+        },
         well.display(),
         match semantic::Semantic::new(&well.to_string_lossy()).unavailable() {
             Some(reason) => format!("ido-mcp: keyword search only — {reason}"),
@@ -291,12 +331,41 @@ mod tests {
         }
     }
 
+    /// §8's gate is opt-in at the process level, and combines with serving
+    /// rather than replacing it (unlike the two offline commands).
+    #[test]
+    fn writes_are_off_unless_asked_for() {
+        assert!(!parse_args(args(&[])).unwrap().allow_write);
+        assert!(
+            !parse_args(args(&["--well", "/tmp/w"])).unwrap().allow_write,
+            "opening a well is not consent to write to it"
+        );
+        let cli = parse_args(args(&["--well", "/tmp/w", "--allow-write"])).unwrap();
+        assert!(cli.allow_write);
+        assert_eq!(
+            cli.action,
+            Action::Serve,
+            "it modifies serving, not replaces"
+        );
+        assert_eq!(cli.well, Some(PathBuf::from("/tmp/w")));
+        assert!(
+            parse_args(args(&["--allow-write", "--well", "/tmp/w"]))
+                .unwrap()
+                .allow_write,
+            "order-independent"
+        );
+    }
+
     #[test]
     fn bad_arguments_are_errors_not_panics() {
         assert!(parse_args(args(&["--well"])).is_err(), "missing value");
         assert!(parse_args(args(&["--wel", "/tmp/w"])).is_err(), "typo");
         assert!(parse_args(args(&["/tmp/w"])).is_err(), "positional");
         assert!(parse_args(args(&["--eval"])).is_err(), "missing query set");
+        assert!(
+            parse_args(args(&["--allow-writes"])).is_err(),
+            "a near-miss spelling must not be silently ignored — it would read as writes-on"
+        );
         assert!(
             parse_args(args(&["--reindex", "--eval", "q.jsonl"])).is_err(),
             "two offline commands in one run is a mistake, not a sequence"

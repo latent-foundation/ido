@@ -1,6 +1,7 @@
 [package]
 name = "ido-mcp"
-version = "1.1.0"
+# Inherited from the workspace root — one version for the whole app.
+version.workspace = true
 edition = "2024"
 
 # The MCP server binary: a well, read-only, over stdio. See
@@ -8,14 +9,10 @@ edition = "2024"
 
 [features]
 # Semantic + hybrid search (P2): forwards the store's feature, pulling in the
-# candle embedding stack. Off by default so the default build stays a 3-crate
-# add.
-#
-# The shipped sidecar is still built **without** it — see the note on `just
-# sidecar` in the justfile. Short version: the app has no model-download UI
-# yet (P3), so a semantic sidecar could never obtain the weights and would
-# degrade to keyword anyway, while the candle release build lands on every
-# `just dev`. Flip it on in the same change that ships the download UI.
+# candle embedding stack. Off by default, so a plain `cargo build -p ido-mcp`
+# stays a 3-crate add — but **the shipped sidecar is built with it** (`just
+# sidecar`), because P3 gave the app a model-download UI that fills the
+# per-machine model cache the sidecar reads.
 semantic = ["ido-store/semantic"]
 
 [dependencies]

@@ -3,6 +3,7 @@
 use latent_ui::ThemeToggle;
 use leptos::prelude::*;
 
+use crate::components::settings::VERSION;
 use crate::state::State;
 
 /// The launcher: brand + tagline, then either the chooser or the create form.
@@ -27,6 +28,7 @@ pub fn Launch() -> impl IntoView {
                 }}
             </div>
             <div class="ido-launch-foot">
+                <span class="ido-launch-version">{VERSION}</span>
                 <ThemeToggle />
             </div>
         </section>

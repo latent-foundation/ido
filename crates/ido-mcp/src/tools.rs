@@ -21,7 +21,8 @@ use ido_store::{notes, tasks, wells, wiki};
 use rmcp::schemars;
 
 use crate::render::{
-    cell, clamp_limit, content_block, dash, guard_id, header, iso_date, paging, row, window,
+    cell, clamp_limit, content_block, dash, guard_id, header, iso_date, paging, parse_date_arg,
+    row, window,
 };
 use crate::semantic::Semantic;
 
@@ -140,8 +141,13 @@ pub struct ListGoalsParams {
 
 /// Which kind of entry an id names. Mirrors the `kind` strings the store's
 /// `SearchHit` / `LinkRef` use, so ids round-trip verbatim.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Kind {
+///
+/// `pub(crate)` so [`crate::resources`] and [`crate::prompts`] share this
+/// instead of a second copy: a resource's `ido://<kind>/<id>` uri names the
+/// same four kinds `get_entry` does, and a prompt's task/goal rows use
+/// [`status_of`] below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
     Note,
     Wiki,
     Task,
@@ -150,7 +156,7 @@ enum Kind {
 
 impl Kind {
     /// Parse the `kind` a tool was handed, rejecting anything unknown.
-    fn parse(kind: &str) -> Result<Self, String> {
+    pub(crate) fn parse(kind: &str) -> Result<Self, String> {
         match kind.trim().to_lowercase().as_str() {
             "note" => Ok(Kind::Note),
             "wiki" => Ok(Kind::Wiki),
@@ -163,7 +169,7 @@ impl Kind {
     }
 
     /// The wire name, as `search` / `list_entries` report it.
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Kind::Note => "note",
             Kind::Wiki => "wiki",
@@ -187,26 +193,12 @@ fn parse_section(section: &str) -> Result<Section, String> {
 
 /// The 10-char date prefix of a `due` value — a due may carry an optional
 /// " HH:MM", and every date comparison in ido works off the prefix.
-fn due_date(due: &str) -> &str {
+///
+/// `pub(crate)` so [`crate::prompts`] filters overdue/due-today tasks the same
+/// way every other date comparison in this crate does — one prefix rule, not
+/// a second one for the prompts.
+pub(crate) fn due_date(due: &str) -> &str {
     due.get(..10).unwrap_or(due)
-}
-
-/// Validate a caller-supplied `YYYY-MM-DD` filter argument, returning the date
-/// itself. Anything else is a tool error rather than a silently-empty result.
-fn parse_date_arg(what: &str, value: &str) -> Result<String, String> {
-    let date: String = value.trim().chars().take(10).collect();
-    let shaped = date.chars().count() == 10
-        && date.char_indices().all(|(i, c)| match i {
-            4 | 7 => c == '-',
-            _ => c.is_ascii_digit(),
-        });
-    if shaped {
-        Ok(date)
-    } else {
-        Err(format!(
-            "{what} must be a date like 2026-08-25 (got `{value}`)"
-        ))
-    }
 }
 
 /// Count the non-folder leaves of a tree.
@@ -224,7 +216,11 @@ fn count_files(nodes: &[TreeNode]) -> usize {
 }
 
 /// Flatten a tree into `(id, name)` leaves, depth-first.
-fn flatten(nodes: &[TreeNode], out: &mut Vec<(String, String)>) {
+///
+/// `pub(crate)` so [`crate::resources`] can enumerate notes the same way
+/// [`list_entries`] and [`wiki_pages`] do, for `resources/list`'s
+/// most-recently-modified sweep across every kind.
+pub(crate) fn flatten(nodes: &[TreeNode], out: &mut Vec<(String, String)>) {
     for node in nodes {
         if node.is_dir {
             flatten(&node.children, out);
@@ -236,7 +232,11 @@ fn flatten(nodes: &[TreeNode], out: &mut Vec<(String, String)>) {
 
 /// Every wiki page as `(slug, wiki-relative path)` — folders are cosmetic, so
 /// the slug is the id and the path is only shown for orientation.
-fn wiki_pages(well: &str) -> Vec<(String, String)> {
+///
+/// `pub(crate)` so [`crate::write`] can answer "did this page already exist?"
+/// with the same enumeration the read tools use — a second copy would be one
+/// more thing to keep in step with the store's tree shape.
+pub(crate) fn wiki_pages(well: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     flatten(&wiki::list_wiki(well.to_string()), &mut out);
     // `flatten` yields (path, name); a page's identity is its name (the slug).
@@ -253,7 +253,10 @@ fn checks(task: &Task) -> String {
 }
 
 /// A task's column, naming the un-columned case the way the board does.
-fn status_of(task: &Task) -> &str {
+///
+/// `pub(crate)` so [`crate::prompts`]'s daily review names a backlog task the
+/// same way `list_tasks` does, rather than re-deriving the empty-string rule.
+pub(crate) fn status_of(task: &Task) -> &str {
     if task.status.is_empty() {
         "backlog"
     } else {
@@ -267,8 +270,9 @@ fn occurrences(hay: &str, needle: &str) -> usize {
 }
 
 /// Absolute path of the file backing an entry, for `stat`-only use (size +
-/// mtime in [`list_entries`]). Never opened for reading.
-fn entry_file(well: &str, kind: Kind, rel: &str) -> PathBuf {
+/// mtime in [`list_entries`], and in [`crate::resources`]'s recency sweep).
+/// Never opened for reading.
+pub(crate) fn entry_file(well: &str, kind: Kind, rel: &str) -> PathBuf {
     let root = Path::new(well);
     match kind {
         Kind::Note => root.join("notes").join(format!("{rel}.md")),
@@ -294,8 +298,10 @@ fn file_stats(path: &Path) -> (String, String) {
 // --- 1. well_info -----------------------------------------------------------
 
 /// Orientation: what this well is, how its board is shaped, how much is in it,
-/// and which search modes are actually live here (§5.2's index status).
-pub fn well_info(well: &str, name: &str, semantic: &Semantic) -> String {
+/// which search modes are actually live here (§5.2's index status), and whether
+/// this process can write (§8's `--allow-write`, which the model otherwise has
+/// no way to discover except by trying).
+pub fn well_info(well: &str, name: &str, semantic: &Semantic, allow_write: bool) -> String {
     let manifest = wells::read_manifest(well);
     let columns = tasks::task_columns(well.to_string());
     let all_tasks = tasks::list_tasks(well.to_string());
@@ -348,10 +354,18 @@ pub fn well_info(well: &str, name: &str, semantic: &Semantic) -> String {
     let _ = writeln!(out, "{}", semantic.status_lines());
     let _ = writeln!(
         out,
-        "- access: read-only — this server never creates, edits or deletes any note, page, task \
-         or goal{}",
+        "- access: {}{}",
+        if allow_write {
+            "write-enabled — `create_entry`, `append_to_entry`, `create_task` and \
+             `update_task_field` are live. Even so this server never deletes an entry, never \
+             overwrites or truncates a body, and edits a task one field at a time"
+        } else {
+            "read-only — this server never creates, edits or deletes any note, page, task or goal"
+        },
         if semantic.unavailable().is_none() {
-            "; the one thing it writes is the rebuildable search cache under `.ido/index`"
+            "; it also maintains the rebuildable search cache under `.ido/index`"
+        } else if allow_write {
+            ""
         } else {
             " and writes nothing at all"
         }
@@ -1018,20 +1032,6 @@ mod tests {
         assert!(Kind::parse("notes").is_err(), "section name, not a kind");
         assert!(parse_section("notes").is_ok());
         assert!(parse_section("note").is_err(), "kind name, not a section");
-    }
-
-    #[test]
-    fn date_args_take_the_ten_char_prefix() {
-        assert_eq!(
-            parse_date_arg("due_before", "2026-08-25").unwrap(),
-            "2026-08-25"
-        );
-        assert_eq!(
-            parse_date_arg("due_before", "2026-08-25 14:30").unwrap(),
-            "2026-08-25"
-        );
-        assert!(parse_date_arg("due_before", "next tuesday").is_err());
-        assert!(parse_date_arg("due_before", "2026-8-5").is_err());
     }
 
     #[test]

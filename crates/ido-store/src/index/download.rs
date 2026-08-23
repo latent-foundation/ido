@@ -40,6 +40,66 @@ const MAX_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 /// absent and the next attempt overwrites it.
 const PART_SUFFIX: &str = ".part";
 
+/// How often [`ensure_model_with_progress`] calls back mid-file, in bytes.
+/// Small enough that a progress bar looks alive, large enough that a UI poll
+/// isn't drowned in ticks on a fast connection.
+const PROGRESS_EVERY_BYTES: u64 = 256 * 1024;
+
+/// One tick of the model fetch, for a progress UI. Ticks are throttled to
+/// roughly every [`PROGRESS_EVERY_BYTES`] of a single file, except the first
+/// (a file the cache already has, reported once rather than skipped
+/// entirely — see [`ensure_model_with_progress`]) and the last of each file,
+/// which always fire so a UI never sits at a stale percentage.
+pub struct DownloadProgress {
+    /// The file currently being fetched — a name from `ModelSpec::files`.
+    pub file: String,
+    /// This file's position in `spec.files`, 0-based.
+    pub file_index: usize,
+    /// Total files in `spec.files`.
+    pub file_count: usize,
+    /// Bytes of *this* file received so far.
+    pub bytes: u64,
+    /// This file's total size, when the server sent `Content-Length`. `None`
+    /// for a chunked or close-delimited response — a UI falls back to a
+    /// spinner rather than a percentage.
+    pub file_total: Option<u64>,
+}
+
+/// Tracks a single file's downloaded bytes and decides when they cross
+/// [`PROGRESS_EVERY_BYTES`] since the last tick — pure and network-free, so
+/// the throttling behaviour is unit-testable without a server (see the tests
+/// below).
+struct ProgressThrottle {
+    /// Total bytes seen so far, across every call to [`ProgressThrottle::add`].
+    total: u64,
+    /// Bytes seen since the last tick.
+    since_last: u64,
+}
+
+impl ProgressThrottle {
+    fn new() -> Self {
+        Self {
+            total: 0,
+            since_last: 0,
+        }
+    }
+
+    /// Record `n` more bytes. Returns the running total when a tick is due,
+    /// `None` otherwise — the caller is expected to also emit one final,
+    /// unconditional tick after the last `add`, so a file smaller than the
+    /// threshold (or a last partial chunk) is never under-reported.
+    fn add(&mut self, n: u64) -> Option<u64> {
+        self.total += n;
+        self.since_last += n;
+        if self.since_last >= PROGRESS_EVERY_BYTES {
+            self.since_last = 0;
+            Some(self.total)
+        } else {
+            None
+        }
+    }
+}
+
 /// Where `spec`'s files live (or would live) on this machine. Honors an
 /// `IDO_MODEL_DIR` override (tests, evals); the repo's `/` is flattened so
 /// one directory holds one model.
@@ -65,17 +125,50 @@ pub fn model_present(spec: &ModelSpec) -> bool {
 
 /// Ensure `spec`'s files are on disk, downloading whatever is missing.
 /// Returns the model directory. User-triggered only — never called on a
-/// server's startup path.
+/// server's startup path. See [`ensure_model_with_progress`] for the
+/// streaming/progress-reporting form this delegates to.
 pub fn ensure_model(spec: &'static ModelSpec) -> Result<PathBuf, String> {
+    ensure_model_with_progress(spec, &mut |_| {})
+}
+
+/// [`ensure_model`], reporting download progress as it streams each file —
+/// every guarantee is identical: `.part` staging, sha256 verification before
+/// rename, remove-dest-then-rename for Windows, and a partial download
+/// treated as absent.
+pub fn ensure_model_with_progress(
+    spec: &'static ModelSpec,
+    on_progress: &mut dyn FnMut(DownloadProgress),
+) -> Result<PathBuf, String> {
     let dir = model_dir(spec)?;
     fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
-    for (name, sha) in spec.files {
+    let file_count = spec.files.len();
+    for (file_index, (name, sha)) in spec.files.iter().enumerate() {
         check_plain_name(name)?;
         let dest = dir.join(name);
         if complete(&dest) {
+            // Already have it — one tick regardless, so a UI polling a
+            // resumed download never sits at 0% for a file that will never
+            // move again.
+            let file_total = fs::metadata(&dest).ok().map(|m| m.len());
+            on_progress(DownloadProgress {
+                file: name.to_string(),
+                file_index,
+                file_count,
+                bytes: file_total.unwrap_or(0),
+                file_total,
+            });
             continue;
         }
-        fetch_verified(spec, name, sha, &dir, &dest)?;
+        fetch_verified(
+            spec,
+            name,
+            sha,
+            &dir,
+            &dest,
+            file_index,
+            file_count,
+            on_progress,
+        )?;
     }
     Ok(dir)
 }
@@ -109,27 +202,32 @@ fn file_url(spec: &ModelSpec, name: &str) -> String {
 /// Download one file to `<dest>.part`, verify its sha256, and only then move
 /// it to `dest`. Every failure path removes the partial file, so "the model is
 /// present" never means "some of the model is present".
+#[allow(clippy::too_many_arguments)]
 fn fetch_verified(
     spec: &ModelSpec,
     name: &str,
     want: &str,
     dir: &Path,
     dest: &Path,
+    file_index: usize,
+    file_count: usize,
+    on_progress: &mut dyn FnMut(DownloadProgress),
 ) -> Result<(), String> {
     let url = file_url(spec, name);
     let tmp = dir.join(format!("{name}{PART_SUFFIX}"));
 
-    let result = stream_to_file(&url, &tmp).and_then(|_| {
-        let got = sha256_file(&tmp)?;
-        if got == want {
-            Ok(())
-        } else {
-            Err(format!(
-                "{name} failed its integrity check (expected {want}, got {got}) — \
-                 the pinned revision may have been re-uploaded"
-            ))
-        }
-    });
+    let result =
+        stream_to_file(&url, &tmp, name, file_index, file_count, on_progress).and_then(|_| {
+            let got = sha256_file(&tmp)?;
+            if got == want {
+                Ok(())
+            } else {
+                Err(format!(
+                    "{name} failed its integrity check (expected {want}, got {got}) — \
+                     the pinned revision may have been re-uploaded"
+                ))
+            }
+        });
     if let Err(e) = result {
         let _ = fs::remove_file(&tmp);
         return Err(e);
@@ -148,20 +246,58 @@ fn fetch_verified(
 /// to pass through memory. ureq errors on a non-2xx status by default, so a
 /// 404 from a bad revision surfaces as a download error rather than an HTML
 /// error page written to disk.
-fn stream_to_file(url: &str, path: &Path) -> Result<(), String> {
+///
+/// The copy is a manual read/write loop rather than `std::io::copy`, so the
+/// byte count is available to throttle progress ticks through
+/// [`ProgressThrottle`]. A final tick always fires after the loop, even for a
+/// file under the throttle threshold, so every file reports at least once.
+fn stream_to_file(
+    url: &str,
+    path: &Path,
+    name: &str,
+    file_index: usize,
+    file_count: usize,
+    on_progress: &mut dyn FnMut(DownloadProgress),
+) -> Result<(), String> {
     let response = ureq::get(url)
         .call()
         .map_err(|e| format!("downloading {url}: {e}"))?;
-    let mut reader = response
-        .into_body()
-        .into_with_config()
-        .limit(MAX_FILE_BYTES)
-        .reader();
+    let body = response.into_body();
+    let file_total = body.content_length();
+    let mut reader = body.into_with_config().limit(MAX_FILE_BYTES).reader();
     let mut file = File::create(path).map_err(|e| format!("creating {}: {e}", path.display()))?;
-    std::io::copy(&mut reader, &mut file)
-        .map_err(|e| format!("writing {}: {e}", path.display()))?;
+
+    let mut buf = [0u8; 64 * 1024];
+    let mut throttle = ProgressThrottle::new();
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .map_err(|e| format!("downloading {url}: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n])
+            .map_err(|e| format!("writing {}: {e}", path.display()))?;
+        if let Some(bytes) = throttle.add(n as u64) {
+            on_progress(DownloadProgress {
+                file: name.to_string(),
+                file_index,
+                file_count,
+                bytes,
+                file_total,
+            });
+        }
+    }
     file.flush()
-        .map_err(|e| format!("writing {}: {e}", path.display()))
+        .map_err(|e| format!("writing {}: {e}", path.display()))?;
+    on_progress(DownloadProgress {
+        file: name.to_string(),
+        file_index,
+        file_count,
+        bytes: throttle.total,
+        file_total,
+    });
+    Ok(())
 }
 
 /// The file's sha256 as lowercase hex, read in chunks so hashing a large
@@ -252,6 +388,44 @@ mod tests {
         assert_eq!(
             sha256_file(&path).unwrap(),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn progress_throttle_holds_below_the_threshold_and_ticks_on_crossing_it() {
+        let mut t = ProgressThrottle::new();
+        assert_eq!(t.add(1024), None, "well under the threshold");
+        assert_eq!(t.add(2048), None, "still under, even accumulated");
+        let tick = t.add(PROGRESS_EVERY_BYTES);
+        assert_eq!(
+            tick,
+            Some(1024 + 2048 + PROGRESS_EVERY_BYTES),
+            "a tick reports the running total, not the chunk that crossed it"
+        );
+        assert_eq!(
+            t.add(10),
+            None,
+            "the since-last counter resets after a tick"
+        );
+    }
+
+    #[test]
+    fn progress_throttle_ticks_are_monotonically_increasing() {
+        let mut t = ProgressThrottle::new();
+        let mut last_tick = 0u64;
+        for _ in 0..40 {
+            if let Some(bytes) = t.add(37_000) {
+                assert!(bytes > last_tick, "ticks must never go backwards");
+                last_tick = bytes;
+            }
+        }
+        assert!(
+            last_tick > 0,
+            "40 * 37,000 bytes must cross the threshold at least once"
+        );
+        assert!(
+            t.total >= last_tick,
+            "the running total never falls behind the last tick it produced"
         );
     }
 

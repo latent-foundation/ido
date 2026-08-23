@@ -17,6 +17,11 @@ Runtime, nothing native to bundle**) → **brute-force cosine over an in-memory 
 index — a personal well is far too small to need one) → fuse with the existing lexical scan via
 reciprocal rank fusion. Writes come last, gated, and only after the read path is trusted.
 
+**Status (2026-08-23): all five phases have shipped.** Seven read tools plus, behind
+`--allow-write`, four never-destructive write tools; hybrid search live in both the server and the
+app's `Ctrl+K` palette; entries addressable as `ido://` resources and two prompts over them. What
+remains is listed at the end of §7 and in §10 — nothing on the critical path.
+
 ---
 
 ## 1. Goals and non-goals
@@ -288,10 +293,39 @@ ido://note/{path}     ido://wiki/{slug}     ido://task/{id}     ido://goal/{id}
 well (a 5,000-note well would blow the client's context on a list call). `resources/read` maps
 onto the same code path as `get_entry`, with a short `ttlMs`.
 
-### 5.4 Prompts (phase 4, optional)
+**Built in P4** (`crates/ido-mcp/src/resources.rs`), exactly as written. Three things worth
+recording:
+
+- **`resources/read` calls `tools::get_entry` itself**, not a parallel renderer — an integration
+  test asserts the resource text and the tool text for the same id are byte-identical. "Maps onto
+  the same code path" was taken literally, because two renderers of the same entry is precisely the
+  drift the store extraction exists to prevent.
+- **`parse_uri` is the only place a uri is taken apart**, and it runs the same `guard_id` every
+  tool argument gets. A uri is just another way to send a path (§9), so `ido://note/../../etc/passwd`
+  is rejected there and never reaches the store's own `confined` check.
+- **`LIST_LIMIT = 50`**, most-recently-modified first. An unstat'able file sorts last rather than
+  breaking the ranking.
+
+Cache hints follow §4.1: templates 1 h / `public` (they describe uri *shape*, no well content),
+`resources/list` 1 min / `private` (it surfaces real titles), `resources/read` **5 s** / `private` —
+a body can change under the client at any moment, so that number smooths a double-read within one
+turn and nothing more.
+
+### 5.4 Prompts (phase 4, optional) — **DONE 2026-08-23**
 
 `daily_review` (overdue + due-today + recently touched notes), `weekly_digest` (what changed,
 which goals moved). Cheap to add once the tools exist; skip until the read path is boring.
+
+Both shipped in P4, and "cheap" held: `crates/ido-mcp/src/prompts.rs` gathers state through
+`tasks::list_tasks` / `list_goals` and `resources`' existing recency sweep, formats it with
+`render.rs`'s existing table helpers, and hands the client's own model one `Role::User` message to
+triage. No second date implementation and no second walk of the well. Neither takes arguments —
+the well is already fixed for the life of the process (§3.4), so there was nothing to parameterise.
+
+The one judgement call: `is_overdue` / `is_due_today` deliberately **mirror the app's own
+convention** (`components/tasks/logic.rs`'s `overdue_count`) — archived and done-column excluded,
+compared on the 10-char date prefix so a due *time* never breaks the comparison. A prompt that
+counted overdue differently from the badge in the rail would be worse than no prompt.
 
 ### 5.5 Response shaping
 
@@ -579,6 +613,13 @@ tokens otherwise drag every short chunk toward the same point in the space.
 Batch 16–64 chunks per forward pass and reuse the loaded model across the whole index build; the
 per-call overhead dominates otherwise.
 
+**But size a batch by `count × seq²`, not by count** — and sort by length before batching. The
+attention tensor is `count × heads × seq × seq` f32s, so a row cap alone bounds nothing: 32
+full-length chunks is 384 MB in one allocation, and parallel batches multiply that (P3 hit exactly
+this, §7). Sorting first is the same fix from the other side: `BatchLongest` padding makes a batch
+cost its *longest* member for every row, so mixing lengths wastes compute as surely as it wastes
+memory.
+
 #### Model download and cache
 
 Candle's examples use `hf-hub`, but that crate went through a **0.5 → 1.0 API redesign** (candle
@@ -600,7 +641,7 @@ user-triggered, and it must be reported as such in the UI.
 | Concern | Assessment |
 |---|---|
 | **Inference speed** | Candle CPU is generally **slower than ORT** for BERT — call it 1.5–3× until measured. It does not matter for queries (one short text, single-digit to low-tens ms) and it does matter for a cold index build. Measure it (§10) |
-| **Cold index build** | The real exposure, and the estimate that was wrong. ~~Plausibly 1–5 min~~ — **measured 4.16 chunks/sec** (release, 6-core CPU, ~430-token chunks, batches parallelised with `rayon`), so 5,000 chunks is **~20 min**; ~50 min without the `rayon` layer. Proper batching and `rayon` across batches are both in. What remains: `metal`/`accelerate` (macOS only), smaller chunks (attention is quadratic, so this pays superlinearly), or a smaller model. The design mitigation is what keeps this acceptable — build once in the background, incrementally thereafter (§6.6), so a user meets it exactly once |
+| **Cold index build** | The real exposure, and the estimate that took two passes to get right. P2 measured **4.16 chunks/sec** with `rayon` across batches (1.66 without) — ~20 min per 5,000 chunks, missing the "few minutes" bar. P3 then found that batches were padded to their longest member (`BatchLongest`), so one 512-token chunk cost its whole batch 512 tokens of compute: **sorting by length before batching is ~4×** (an eval-well rebuild went 26 s → 6.5 s; a real 400-chunk well indexes in ~20 s, ≈20 chunks/sec). At that rate 5,000 chunks is **~4 min**, which clears the bar. The worst case — a corpus of uniformly max-length chunks, where bucketing has nothing to sort — stays at the P2 number. Remaining levers: `metal`/`accelerate` (macOS only) or a smaller model. And the design mitigation still does the heavy lifting: build once, in the background, incrementally thereafter (§6.6) |
 | **Compile time** | **Measured: 2m09s cold** for the 185-crate candle tree (§11.4). Gate the whole index module behind a **`semantic` cargo feature** on `ido-store` so `src-tauri`, `just verify`, and CI stay fast when it's off |
 | **Binary size** | **Measured: 5.1 MB linked / 4.1 MB stripped** (§11.4). Model weights live in the on-disk cache, never in the executable |
 | **Dependency count** | **+82 crates**, of which 79 are the candle stack and 3 are rmcp — see §11 |
@@ -683,6 +724,24 @@ The app and the MCP server both write; the index must not go stale silently.
 - **App-side rebuild** is the nice path: ido already knows exactly which file it just wrote, so it
   can re-embed one entry on save. Wire this when the app grows an in-app semantic search — until
   then the MCP server's sweep is sufficient and simpler.
+  **That trigger fired in P3, and the gap was closed on 2026-08-23** — though not on save.
+  Re-embedding on every keystroke is absurd (the editor autosaves continuously), and an on-save
+  hook would have needed its own debounce, its own thread, and a decision about what to do when the
+  user is mid-sentence. Freshness is a **serving** concern, so the app now does exactly what this
+  server does: before a semantic/hybrid search, sweep if the index is stale and 30 s have passed
+  since the last sweep (`src-tauri/src/semantic.rs`'s `backend::refresh`, mirroring
+  `SWEEP_DEBOUNCE` here). `search_hybrid` became `async` + `spawn_blocking` so that sweep never
+  sits on a thread the UI needs. Two rules the app adds that this server does not:
+
+  - **It never builds an index that doesn't exist.** Creating one is minutes of CPU and, before
+    that, a 133 MB download — something the user opts into in settings with a progress bar, never
+    something a keystroke in the palette starts behind their back. This server may create one,
+    because a headless process has no settings pane to defer to.
+  - **It defers to a running settings job.** That job owns the lock and is about to make the sweep
+    redundant anyway.
+
+  A held lock stays a non-error on both sides: the other process is doing the work, so answer from
+  the index you have.
 - **Never index `.ido/` or `assets/`.** Never let a symlink walk out of the well.
 
 ### 6.7 Evaluating it
@@ -755,9 +814,10 @@ keyword's 1.000. Neither half is sufficient alone, exactly as §6.5 claims.
   revision and a sha256 per file are pinned in the `ModelSpec`.
 - **Warm query: imperceptible** — ~25 ms end-to-end, dominated by the query's own forward pass.
   The brute-force cosine sweep is noise beside it, as §6.4 predicted.
-- **Cold index build: misses the bar — ~20 min for 5,000 chunks, not "a few minutes".** Measured
-  4.16 chunks/sec (release, 6-core CPU, ~430-token chunks), corroborated by a real rebuild of the
-  eval well: 108 chunks across 51 files in 26 s. See the corrected row in §6.3's honest costs.
+- **Cold index build: missed the bar at P2, cleared it in P3.** P2 measured 4.16 chunks/sec
+  (release, 6-core CPU, ~430-token chunks) — ~20 min for 5,000 chunks. P3's length-bucketed
+  batching (below, and §6.3's honest costs) took the same eval-well rebuild from 26 s to 6.5 s,
+  and a real 400-chunk well now indexes in ~20 s. See §6.3.
 
 Two things surfaced in the build that the plan did not anticipate:
 
@@ -772,7 +832,7 @@ Two things surfaced in the build that the plan did not anticipate:
   to MCP `search`. Fixed, with a regression test. Hybrid forced the issue: a fused ranking is only
   meaningful when both halves see the same corpus.
 
-### P3 — Packaging + in-app surface
+### P3 — Packaging + in-app surface — **DONE 2026-08-23**
 
 Bundle `ido-mcp` as a **Tauri sidecar** (`bundle.externalBin`, per-target-triple naming:
 `binaries/ido-mcp-aarch64-apple-darwin`, `…-x86_64-pc-windows-msvc.exe`, …) — with candle this is
@@ -782,14 +842,132 @@ the server, copy the `.mcp.json` snippet, show/trigger the model download, show 
 the same index for **in-app semantic search** in the `Ctrl+K` palette — same code, second consumer,
 and the honest test of whether retrieval is actually good.
 
-The non-semantic slice (sidecar bundling + the settings-pane config surface) shipped 2026-08-21 alongside P1; the semantic parts (model download UI, index status, in-app semantic search) remain.
+The non-semantic slice (sidecar bundling + the settings-pane config surface) shipped 2026-08-21
+alongside P1. The semantic parts shipped 2026-08-23:
 
-### P4 — Writes (gated) + polish
+- **A "semantic search" section in settings** — one panel that walks the whole path: download the
+  model (naming it and its size, and saying plainly that this is the only time ido uses the
+  network), build the well's index, then show `chunks across files · built <date>`, with a quiet
+  marker when the well has changed since. Long jobs report live progress.
+- **Progress is polled, not pushed.** The app had no Tauri event plumbing and this screen was the
+  only thing that would have wanted it. A poll costs one command per tick and cannot drop an
+  update; an event stream would have added a capability, a listener, and a lost-event failure mode
+  for one panel. `src-tauri/src/semantic.rs` owns a single job slot — a second job is refused with
+  a message naming what is already running, rather than silently queued.
+- **The `Ctrl+K` palette is hybrid** (answering §10's open question 4: the palette became hybrid;
+  semantic did not get a separate mode). It badges the retrieval that *actually* ran, read off the
+  backend response — so it can never claim semantic results it did not get, and keyword stays
+  unbadged rather than adding noise.
+- **The sidecar now builds with `--features semantic`**, which P2 deliberately deferred: the app
+  can finally obtain the weights, and the sidecar reads the same per-machine model cache.
+- **`src-tauri` takes `semantic` as a default feature.** In-app semantic search is the point of the
+  phase, so the degradation path exists for builds that opt *out*, not as the normal case.
+- The superseded keyword-only `search` command was removed: `search_hybrid`'s keyword mode *is*
+  that same scan, and keeping both is exactly the drift the store split exists to prevent.
+
+**Two bugs this phase found, both in P2 code:**
+
+- **The cold build could abort the process.** `MAX_BATCH` bounds a batch's *rows*, but attention is
+  `count × heads × seq × seq` f32s — memory grows with the **square** of the batch's longest
+  sequence, and P2's rayon layer runs one batch per core. 32 full-length chunks is a single 384 MB
+  allocation; twelve in parallel asked for ~4.6 GB and killed the app with
+  `memory allocation of 402653184 bytes failed`. The fix caps `count × seq²` per batch and sorts
+  texts by length first, so short-text batches stay big (where the throughput is) and only long
+  ones shrink. **It also made indexing ~4× faster** — `BatchLongest` padding meant one 512-token
+  chunk was padding its whole batch up to 512 and paying that length's compute for every row.
+  Same vectors (the known-vector gate is unchanged to the last digit), same eval scores.
+- **A crash leaves a stale index lock**, and §6.6's 10-minute staleness timeout means the next
+  build refuses with "index locked by another process" until it expires. Correct by design and
+  correctly surfaced in the UI, but a rough edge worth knowing about; a liveness check on the
+  recorded pid would be the fix if it ever bites in practice.
+
+  **It bit, on 2026-08-23** — and the diagnosis changes how likely it is. A lock was found holding
+  `pid 15020 at …`, that pid was gone, and rebuilds were refused for the full ten minutes before it
+  self-healed. The holder was not a crash: it was an **`ido-mcp` process an MCP client had spawned
+  and then killed**, mid-sweep, on client shutdown. That reframes the frequency. This was written
+  expecting a crash — rare. But *a client killing its stdio server is routine*: every client
+  restart, every config reload, every "quit the editor" does it, and P2 made the server sweep in
+  the background at startup, which is exactly when a kill would land on a held lock. So the
+  expected rate is "occasionally", not "on a crash".
+
+  Severity stays low — searches keep answering from the existing index, only *rebuilds* are refused,
+  and it self-heals — so this is not urgent. But the timeout is the wrong mechanism for a
+  process-death that the OS already knows about. Three fixes, cheapest first:
+  1. **`FILE_FLAG_DELETE_ON_CLOSE`** (Windows, `OpenOptionsExt::custom_flags`, no dependency): the
+     OS deletes the lock when the holder's handle closes, including on `TerminateProcess`. Fixes
+     the platform that actually ships; other platforms keep the timeout.
+  2. **A real OS advisory lock** (`fs4`/`fd-lock`): deletes `LOCK_STALE_MS`, `lock_is_fresh` and
+     this whole class of bug on every platform — at the cost of a dependency in a crate whose
+     footprint §11 audits deliberately.
+  3. **Heartbeat the lock** from the progress callback and shorten the window. No dependency, but
+     it couples the lock to progress reporting and still guesses a threshold.
+
+  Not done here because it changes a concurrency primitive in a shipped release, which deserves to
+  be a deliberate choice rather than a drive-by.
+
+### P4 — Writes (gated) + polish — **DONE 2026-08-23**
 
 `create_entry`, `append_to_entry`, `create_task`, `update_task_field`. Off unless `--allow-write`.
 Every write is undoable by construction (the store already models soft-delete + restore). Then the
 optional extras: reranking, prompts, int8 quantization, `list_wells` + a `well` parameter, and the
 **EmbeddingGemma revisit** if either trigger in §6.3 has fired.
+
+**As built.** The four write tools shipped behind `--allow-write` under §8's rules, plus resources
+(§5.3) and prompts (§5.4). New store API: `notes::create_note_at` / `append_note`,
+`wiki::create_page_at` / `append_page`, `tasks::append_task_body` / `append_goal_body`, over
+`paths::confined` and `paths::append_text`.
+
+- **The gate is additive, not subtractive.** A second `#[tool_router(router = write_router)]` block
+  holds the write tools, and `Ido::open` merges it *only* in write mode. The tempting shape — build
+  every route, remove the write ones when the flag is absent — fails in the wrong direction: a name
+  forgotten in a removal list is an advertised write tool on a read-only server, while a name
+  forgotten in an additive list is a missing tool in write mode. Both are bugs; only one is a
+  vulnerability.
+- **`guard_writes` re-checks inside every write body** anyway. Nothing in the protocol stops a
+  client calling a name it never saw in `tools/list`, so the router is the gate and this is the
+  proof.
+- **`serving_a_well_writes_nothing` still passes unchanged**, and is now the test that the gate
+  works: the default binary, driven over real stdio, leaves the well byte-identical.
+- **Path confinement runs twice, at different layers**: `guard_id` lexically at the MCP boundary,
+  then `paths::confined` canonically in the store — which walks up to the nearest existing ancestor,
+  canonicalizes *that*, and re-appends the remainder, so a symlink pointing out of the well is
+  rejected even though the leaf doesn't exist yet. There is a test that builds a real symlink; it
+  runs on Windows.
+
+**One real bug this phase found, in code that predates it.** `frontmatter::merge` wrote values
+verbatim, so a value containing a newline round-tripped as **a second field**: a task title of
+`urgent\ncompleted: 2026-01-01` wrote a completion stamp nobody asked for, and a bare `---` closed
+the header early and turned the rest of the frontmatter into body text. The write tools reject such
+input at the MCP boundary (an agent that sent it deserves to be told), but the fix belongs in
+`merge` — it is the only function that renders the format, so it is the only place the invariant can
+be unconditional rather than a thing every caller must remember. Both layers now hold it: the
+boundary **rejects**, the primitive **sanitises**. The app's own drawer fields were reachable the
+same way and are now covered by the second.
+
+**Three optional extras: declined, with reasons.**
+
+- **Reranking** — a cross-encoder pass over the top-N. Hybrid already scores 0.946 recall@5 on the
+  eval well (§6.7); 0.054 of headroom does not justify a second model download, a second known-vector
+  gate, and per-query latency on a search box that currently answers in ~25 ms. candle also has no
+  `BertForSequenceClassification`, so this is a model *port* before it is a feature.
+- **int8 quantization** — the problem it solves is index size, and there isn't one. Measured on a
+  real 400-chunk well: `vectors.bin` 614,400 bytes, `chunks.jsonl` 307 KB, manifest 11 KB — **910 KB
+  all in**. Quantizing to int8 touches only the vectors, so it would save ~460 KB of that. Scaled to
+  5,000 chunks the whole index is ~11 MB, against a ~133 MB model sitting next to it. Not worth the
+  accuracy question, let alone a second code path through the cosine sweep.
+- **`list_wells` + a `well` parameter** — §3.4's argument stands unchanged: one well per process,
+  and a client that wants two registers two servers, which also makes the tool namespace
+  (`mcp__ido-docs__…`) say which well answered. A `well` parameter would put that disambiguation
+  back on the model, on every call.
+
+**EmbeddingGemma: the trigger has not fired** (rechecked against candle-transformers 0.11.0,
+2026-08-23). §6.3's condition is a Gemma *encoder* — bidirectional attention — and there still
+isn't one: both `gemma3.rs` and the new `gemma4/text.rs` build their masks with
+`prepare_decoder_attention_mask`, which is `i < j ⇒ -inf`, strictly causal. Two things in 0.11 look
+like the trigger and aren't: `gemma4/config.rs` now *parses* `use_bidirectional_attention`, but only
+uses it to halve the sliding window — the mask construction is untouched; and
+`gemma4/multimodal_embedding.rs`, despite the name, is the vision/audio → text-space projector
+(an RMSNorm and a linear), not a text retrieval encoder. Recheck on the next candle release.
 
 ### Beyond the roadmap — low priority, after the above
 
@@ -802,10 +980,10 @@ option is on record. **It is not a phase, not a prerequisite, and not scheduled*
 
 ---
 
-## 8. Write tools — the rules, when we get there
+## 8. Write tools — the rules *(implemented in P4, 2026-08-23)*
 
-Deliberately deferred, but the constraints are worth writing down now so P1–P3 don't foreclose
-them:
+Written down before they were built so P1–P3 wouldn't foreclose them; all five held, and the
+as-built notes under P4 (§7) record where each one landed:
 
 - **Opt-in at the process level.** `--allow-write`; absent ⇒ the write tools are not advertised
   at all (not advertised-and-erroring — an unadvertised tool can't be attempted).
@@ -813,6 +991,8 @@ them:
   `create_entry` only; edits to tasks are field-level. The undo path already exists in the store.
 - **Path confinement** on every id: reject `..`, absolute paths, and anything resolving outside the
   well (`paths::valid_name` already rejects separators — extend to canonicalized-prefix checks).
+  *Built as `paths::confined`, and it runs in addition to the boundary's `guard_id`, not instead
+  of it.*
 - **Confirmation** is the client's job, not ours. Under 2026-07-28, server-initiated elicitation is
   gone; the MRTR pattern (`resultType: "input_required"`) is the path if we ever need it. Don't.
 - **Slug collisions uniquify** rather than erroring (same rule as `create_task`).
@@ -828,8 +1008,9 @@ seriously:
 |---|---|
 | Network | **None.** No outbound requests at runtime. The only network event in the system's life is the one-time model download, which is user-triggered and reported |
 | Auth | None needed — stdio, spawned as the user, no listening socket. This is why stdio-before-remote matters |
-| Path traversal | Canonicalize every id against the well root; reject escapes. Never follow symlinks out |
+| Path traversal | Canonicalize every id against the well root; reject escapes. Never follow symlinks out. *Built: `render::guard_id` lexically at the boundary, `paths::confined` canonically in the store (P4)* |
 | Secrets in the well | A well may contain credentials the user pasted into a note. We can't classify that. **Document it**: enabling the MCP server exposes the whole well to whatever client is configured |
+| Frontmatter injection | A free-text value containing a newline used to round-trip as **a second field** — a title could forge a `completed:` stamp, or a bare `---` could close the header. Found in P4, fixed in `frontmatter::merge` itself (the only function that renders the format), with the MCP write tools rejecting such input outright at the boundary |
 | Prompt injection | **Well content is data, not instructions.** A note containing "ignore previous instructions and…" is returned as tool output. Wrap returned bodies in a clear content delimiter and say so in the tool description; the client's model is the last line of defence, but the framing helps |
 | Logging | stderr only (stdout is JSON-RPC). Never log entry bodies at default level |
 | Assets | `read_asset` is deliberately **not** exposed as a tool in P1. Binary blobs in tool results are a bad deal for context; add later only with an explicit, sized reason |
@@ -853,15 +1034,39 @@ seriously:
    known-vector test backend-agnostic anyway, so the escape hatch stays cheap to test.)*
 2. ~~**rmcp 3.0 churn.**~~ **Resolved:** rmcp 3.0 shipped final and 3.1.0 is current; build against
    3.1. Keep the tool bodies in `ido-store` so the SDK layer stays thin and swappable.
-3. **Chunk size.** 450 tokens with 15% overlap is a starting guess. The eval set decides.
-4. **Where in-app semantic search lands** — does the palette become hybrid, or does semantic get a
-   separate mode? Product question; P3.
+3. **Chunk size.** ~~450 tokens with 15% overlap is a starting guess. The eval set decides.~~
+   **Answered by not needing an answer (2026-08-22).** The guess shipped as written — 1,800 chars
+   (≈450 tokens) with 270 chars (15%) of overlap — and the eval set cleared §6.7's gate on it at
+   0.946 recall@5. That makes the guess *unfalsified*, not *optimal*: nothing was swept, so a
+   better setting may well exist. It stops being worth measuring until a real well retrieves badly,
+   at which point `just eval` is the tool that would settle it.
+4. ~~**Where in-app semantic search lands**~~ **Resolved 2026-08-23: the palette became hybrid.**
+   No separate mode and no toggle — a second search surface would make the user do the retrieval
+   engineering. The palette asks for hybrid, renders whatever came back, and badges the mode the
+   backend says actually ran (keyword stays unbadged). Semantic and keyword-only remain reachable
+   per-call through `search_hybrid`'s `mode`, which is what the MCP tool exposes.
 5. **Index-build throughput, and whether Metal is worth it.** *Partly answered (Windows/CPU):*
    4.16 chunks/sec with `rayon` across batches, 1.66 without — candle's internal threading never
    engaged, so the parallelism had to come from above it. 5,000 chunks ≈ 20 min. That is **not**
    "already a couple of minutes", so the Metal / `accelerate` question stays genuinely open for
    the macOS build rather than being skippable. It did not block P2, because the cost is one-time,
-   backgrounded and incremental thereafter. The original question follows. *Spike: time a 5,000-chunk build on
+   backgrounded and incremental thereafter.
+
+   *And **CUDA is declined, deliberately** (2026-08-23).* candle's `cuda` feature works — it was
+   weighed on a machine that has an RTX 2060 SUPER and CUDA 12.4 with `nvcc` on `PATH`, so this is
+   a decision rather than an absence of hardware. Two reasons not to take it. **It reintroduces the
+   packaging problem that ruled out ONNX Runtime** (§6.3): a CUDA build needs the toolkit to
+   compile and an NVIDIA driver to run, in a single executable most users will run without an
+   NVIDIA GPU — so it needs a runtime device probe with CPU fallback, or a second build. And **the
+   payoff is now narrow**: queries are ~25 ms and would not perceptibly improve (upload dominates),
+   while P3's length-bucketed batching already took the cold build to ~4 min for 5,000 chunks. GPU
+   buys a one-time few minutes for a permanent packaging complication. Revisit only if a well grows
+   large enough that the *incremental* rebuild stops being negligible — the one-time build is not a
+   good enough reason. If it is ever taken up, it belongs behind an off-by-default feature with a
+   CPU fallback, and the known-vector test (§10.1) has to pass on the CUDA path too: candle's
+   non-CPU backends have thinner op coverage, so that is a real gate, not a formality.
+
+   The original question follows. *Spike: time a 5,000-chunk build on
    the CPU build, then with `--features metal` and with `accelerate`, on the same Mac.* If CPU is
    already a couple of minutes, ship CPU-only and skip the per-platform feature matrix entirely.
    Candle's Metal backend has thinner op coverage than its CPU one — a fallback path must exist,
@@ -869,7 +1074,10 @@ seriously:
 6. **Multilingual, and how much it costs.** Is `multilingual-e5-small` (~470 MB, mostly vocabulary)
    worth 3.5× the download over `bge-small-en-v1.5` for this user's actual wells? Measure both on
    the eval set. EmbeddingGemma would be the better answer to this question — recheck whether
-   candle-transformers has shipped the encoder before settling.
+   candle-transformers has shipped the encoder before settling. *(Rechecked 2026-08-23 against
+   candle-transformers 0.11.0: still no Gemma encoder — see P4's note in §7 for what in 0.11 looks
+   like one and isn't. So this question stands, and `multilingual-e5-small` remains the only
+   currently-buildable answer to it.)*
 7. **Session/registry access from the MCP process** — `wells.json` lives in Tauri's
    `app_data_dir`, which the store crate can't ask Tauri for. Resolve the path with `directories`
    or replicate the platform rules; only needed for the `--well` fallback.
@@ -1009,15 +1217,21 @@ copy-pastable snippet pointing at it, since the binary is not on `PATH`.
 
 ## Appendix B — commands this adds
 
-### Exist (P0 + P1 + P2 + P3 slice)
+### Exist (P0 + P1 + P2 + P3 + P4)
 ```sh
 just mcp                    # run ido-mcp against the most recent well, stderr to terminal
 just mcp-inspect            # run under the MCP inspector for protocol-level debugging
 just sidecar                # build release ido-mcp and stage as Tauri sidecar binary
 just eval                   # score keyword/semantic/hybrid on the eval well, apply §6.7's gate
 just reindex                # rebuild the most recent well's semantic index from scratch
-cargo test -p ido-store     # the real store test suite (145 tests)
-cargo test -p ido-mcp       # unit + stdio integration tests (22 tests)
+cargo test -p ido-store     # the real store test suite (164 tests; 182 with --features semantic)
+cargo test -p ido-mcp       # unit + stdio integration tests (44 + 14)
+```
+
+The write surface is off by default and has to be asked for explicitly:
+
+```sh
+cargo run --release -p ido-mcp -- --well <path> --allow-write
 ```
 
 `just eval` and `just reindex` are thin wrappers over the binary's own flags, which take `--well`
@@ -1031,9 +1245,9 @@ cargo run --release -p ido-mcp --features semantic -- --well <path> --eval <eval
 `--eval` exits non-zero when §6.7's gate fails, so it is CI-shaped; neither flag ever opens the
 JSON-RPC transport. **Release matters** — a debug candle build makes embedding glacial.
 
-### Still future (P4)
-
-`just verify` includes `cargo test -p ido-store`, `cargo test -p ido` (2), and `cargo test -p ido-mcp`; `just dev`/`dev-debug` depend on `sidecar`; `cargo tauri build` requires `just sidecar` run first.
+`just verify` includes `cargo test -p ido-store` (default **and** `--features semantic`),
+`cargo test -p ido` (5), and `cargo test -p ido-mcp` (both feature states); `just dev`/`dev-debug`
+depend on `sidecar`; `cargo tauri build` requires `just sidecar` run first.
 
 ## Appendix C — references
 

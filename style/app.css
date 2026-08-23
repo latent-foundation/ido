@@ -1143,6 +1143,19 @@ body {
   position: absolute;
   bottom: var(--space-4);
   right: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* The version, quiet enough to ignore and legible enough to quote in a bug
+   report. Tabular figures so it doesn't jitter between releases. */
+.ido-launch-version {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  letter-spacing: 0.02em;
 }
 
 /* icons — base `.icon` rule lives in latent-design's components.css; only
@@ -1458,8 +1471,11 @@ body {
 }
 
 /* A custom checkbox so the unchecked state reads clearly — a bordered well that
-   fills with the accent + a checkmark when checked (native boxes are too faint). */
-.ido-board-control input[type="checkbox"] {
+   fills with the accent + a checkmark when checked (native boxes are too faint).
+   Shared with the settings modal (`.ido-settings-check`): one definition, so the
+   two places the app asks a yes/no question can't drift apart. */
+.ido-board-control input[type="checkbox"],
+.ido-settings-check input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
   flex: none;
@@ -1476,7 +1492,8 @@ body {
     border-color var(--dur-fast) var(--ease-standard);
 }
 
-.ido-board-control input[type="checkbox"]::before {
+.ido-board-control input[type="checkbox"]::before,
+.ido-settings-check input[type="checkbox"]::before {
   content: "";
   width: 9px;
   height: 9px;
@@ -1486,20 +1503,24 @@ body {
   clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
 }
 
-.ido-board-control:hover input[type="checkbox"] {
+.ido-board-control:hover input[type="checkbox"],
+.ido-settings-check:hover input[type="checkbox"] {
   border-color: var(--color-text-muted);
 }
 
-.ido-board-control input[type="checkbox"]:checked {
+.ido-board-control input[type="checkbox"]:checked,
+.ido-settings-check input[type="checkbox"]:checked {
   background: var(--color-accent);
   border-color: var(--color-accent);
 }
 
-.ido-board-control input[type="checkbox"]:checked::before {
+.ido-board-control input[type="checkbox"]:checked::before,
+.ido-settings-check input[type="checkbox"]:checked::before {
   transform: scale(1);
 }
 
-.ido-board-control input[type="checkbox"]:focus-visible {
+.ido-board-control input[type="checkbox"]:focus-visible,
+.ido-settings-check input[type="checkbox"]:focus-visible {
   border-color: var(--color-accent);
 }
 
@@ -3659,6 +3680,26 @@ select.ido-drawer-input {
   color: var(--color-text-muted);
 }
 
+/* The version row sits last and reads as a footnote, not a setting: muted, and
+   with no copy button — five characters are quicker to read than to click, and
+   a hover-revealed button would only be an invisible click target until then. */
+/* A yes/no row in the modal. The box itself is styled with the board's, above;
+   this is just the label that carries it. */
+.ido-settings-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.ido-settings-version .ido-settings-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+
 /* a narrow field + unit suffix, side by side (e.g. auto-archive days) */
 .ido-settings-inline {
   display: flex;
@@ -3750,6 +3791,114 @@ select.ido-drawer-input {
 .ido-settings-copy-btn:hover {
   border-color: var(--color-border-strong);
   color: var(--color-text-primary);
+}
+
+/* semantic search (settings) ========================================== */
+.ido-settings-semantic {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+/* the built-index summary: mono, like the other machine-written values */
+.ido-settings-semantic-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+/* "well changed since" — a nudge, not an alarm: the index still answers */
+.ido-settings-stale {
+  padding: 1px 6px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-ui);
+  color: var(--color-text-secondary);
+}
+
+.ido-settings-action {
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  transition: border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.ido-settings-action:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+.ido-settings-action:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.ido-settings-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.ido-settings-progress-track {
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  background: var(--color-bg-subtle);
+  border-radius: var(--radius-pill);
+}
+
+.ido-settings-progress-fill {
+  width: 0;
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: var(--radius-pill);
+  transition: width var(--dur-fast) var(--ease-standard);
+}
+
+/* a download reports no total until the server sends a length — sweep rather
+   than sit at zero, so the bar reads as "working" instead of "stuck" */
+.ido-settings-progress-indeterminate {
+  width: 30%;
+  animation: ido-progress-sweep 1.4s var(--ease-standard) infinite;
+}
+
+@keyframes ido-progress-sweep {
+  0% {
+    margin-left: -30%;
+  }
+  100% {
+    margin-left: 100%;
+  }
+}
+
+.ido-settings-error {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-danger);
+}
+
+/* the palette's retrieval-mode badge — quiet, and only when it is true */
+.ido-search-mode {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
 }
 
 /* scrollbars — thin, brand-toned ====================================== */

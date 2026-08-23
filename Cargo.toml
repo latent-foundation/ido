@@ -1,6 +1,9 @@
 [package]
 name = "ido-ui"
-version = "1.1.0"
+# Inherited from `[workspace.package]` below — see the note there. The frontend
+# renders this (`env!("CARGO_PKG_VERSION")` in `components::settings`), which is
+# only honest because cargo guarantees it equals the `ido` crate's version.
+version.workspace = true
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -50,4 +53,13 @@ latent-ui = { git = "https://github.com/latent-foundation/latent-ui", tag = "v0.
 
 [workspace]
 members = ["src-tauri", "crates/ido-store", "crates/ido-mcp"]
+
+# **The single source of truth for the app version.** All four crates inherit it
+# with `version.workspace = true`, so there is one line to bump and no way for
+# the number the UI shows to drift from the one Tauri stamps on the installer
+# (`tauri.conf.json` omits `version`, deriving it from the `ido` crate). A
+# release tag `vX.Y.Z` must match this — `.github/workflows/release.yml` reads
+# it from here and refuses to build otherwise.
+[workspace.package]
+version = "1.2.0"
 

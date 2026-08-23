@@ -35,6 +35,23 @@ pub trait Embedder {
     /// Embed a batch. Returns one `dim()`-wide L2-normalized vector per text,
     /// in order.
     fn embed(&self, texts: &[String], role: Role) -> Result<Vec<Vec<f32>>, String>;
+
+    /// Embed, reporting progress as batches finish. `on_batch(n)` receives
+    /// the number of texts newly completed and may be called from several
+    /// threads at once (candle's rayon-parallel batches — see
+    /// `candle::CandleEmbedder`'s override). Default: one call with
+    /// everything, at the end — correct for any embedder that doesn't batch
+    /// internally, just not informative mid-flight.
+    fn embed_with_progress(
+        &self,
+        texts: &[String],
+        role: Role,
+        on_batch: &(dyn Fn(usize) + Sync),
+    ) -> Result<Vec<Vec<f32>>, String> {
+        let out = self.embed(texts, role)?;
+        on_batch(texts.len());
+        Ok(out)
+    }
 }
 
 /// Model architecture, naming the `candle-transformers` implementation that
@@ -85,6 +102,9 @@ pub struct ModelSpec {
     /// one flat directory holds one model. The download verifies these before
     /// a file is moved into place ([`super::download::ensure_model`]).
     pub files: &'static [(&'static str, &'static str)],
+    /// Total bytes of `files`, for a "downloading 133 MB" UI. Informational
+    /// only — integrity is the per-file sha256's job, not this number's.
+    pub download_bytes: u64,
 }
 
 /// The shipped default (§6.3): best retrieval quality per byte, ~133 MB,
@@ -114,6 +134,10 @@ pub const BGE_SMALL_EN_V15: ModelSpec = ModelSpec {
             "3c9f31665447c8911517620762200d2245a2518d6e7208acc78cd9db317e21ad",
         ),
     ],
+    // Measured, not estimated: the sum of the three files actually on disk
+    // at this revision (config.json 743 B + tokenizer.json 711,396 B +
+    // model.safetensors 133,466,304 B).
+    download_bytes: 134_178_443,
 };
 
 /// The model the index builds with unless configured otherwise.
@@ -209,6 +233,21 @@ mod tests {
             cosine(&vs[0], &vs[1]) > cosine(&vs[0], &vs[2]),
             "overlapping vocabulary must rank closer"
         );
+    }
+
+    #[test]
+    fn embed_with_progress_default_reports_the_full_count_once() {
+        // No embedder here overrides `embed_with_progress`, so this exercises
+        // the trait's default body: one call, at the end, with everything.
+        let e = FakeEmbedder::default();
+        let texts = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let calls: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+        let on_batch = |n: usize| calls.lock().unwrap().push(n);
+        let out = e
+            .embed_with_progress(&texts, Role::Document, &on_batch)
+            .unwrap();
+        assert_eq!(out.len(), 3);
+        assert_eq!(*calls.lock().unwrap(), vec![3]);
     }
 
     #[test]

@@ -27,20 +27,33 @@ jobs:
 
       # The tag is the release contract. Refuse to build if it disagrees with the
       # version Tauri will stamp on the installer — `tauri.conf.json` omits
-      # `version`, so `src-tauri/Cargo.toml` is the single source of truth. Runs
+      # `version`, so it derives from the `ido` crate, which in turn inherits
+      # `[workspace.package] version` from the root `Cargo.toml`. That one line
+      # is the single source of truth, so read it there rather than from a
+      # member manifest that now just says `version.workspace = true`. Runs
       # before the toolchain install so a typo'd tag fails in seconds, not minutes.
       - name: Verify tag matches crate version
         shell: pwsh
-        env:
-          TAG: ${{ github.ref_name }}
         run: |
           $tag = $env:TAG -replace '^v', ''
-          $match = Select-String -Path src-tauri/Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1
-          $crate = $match.Matches[0].Groups[1].Value
+          # Scope the match to the [workspace.package] table: a bare
+          # `^version = ` search would also hit the root [package] table if the
+          # inheritance were ever undone, and silently read the wrong number.
+          $lines = Get-Content Cargo.toml
+          $start = ($lines | Select-String -Pattern '^\[workspace\.package\]' | Select-Object -First 1).LineNumber
+          if (-not $start) { throw "no [workspace.package] table in Cargo.toml" }
+          $crate = $null
+          for ($i = $start; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\[') { break }
+            if ($lines[$i] -match '^version = "([^"]+)"') { $crate = $Matches[1]; break }
+          }
+          if (-not $crate) { throw "no version in [workspace.package]" }
           if ($tag -ne $crate) {
-            throw "tag $env:TAG does not match src-tauri/Cargo.toml version $crate — bump one of them"
+            throw "tag $env:TAG does not match [workspace.package] version $crate — bump one of them"
           }
           "VERSION=$crate" >> $env:GITHUB_ENV
+        env:
+          TAG: ${{ github.ref_name }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:

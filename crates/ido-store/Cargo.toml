@@ -1,6 +1,7 @@
 [package]
 name = "ido-store"
-version = "1.1.0"
+# Inherited from the workspace root — one version for the whole app.
+version.workspace = true
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

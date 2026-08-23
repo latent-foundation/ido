@@ -14,7 +14,8 @@ use serde::de::DeserializeOwned;
 use wasm_bindgen::prelude::*;
 
 use crate::model::{
-    Goal, LinkRef, McpInfo, NoteMeta, SavedView, SearchHit, Session, Task, TreeNode, WellRef,
+    Goal, JobStatus, LinkRef, McpInfo, NoteMeta, SavedView, SearchResponse, SemanticInfo, Session,
+    Task, TreeNode, WellRef,
 };
 
 #[wasm_bindgen]
@@ -440,19 +441,6 @@ pub async fn backlinks(well: String, slug: String) -> Vec<LinkRef> {
     deser(call("backlinks", &PageArg { well, slug }).await).unwrap_or_default()
 }
 
-// --- search -----------------------------------------------------------------
-
-#[derive(Serialize)]
-struct SearchArg {
-    well: String,
-    query: String,
-}
-
-/// Cross-section search hits for `query` (notes + wiki + tasks).
-pub async fn search(well: String, query: String) -> Vec<SearchHit> {
-    deser(call("search", &SearchArg { well, query }).await).unwrap_or_default()
-}
-
 // --- tasks ------------------------------------------------------------------
 
 /// The board columns (task `status` values) for this well.
@@ -679,11 +667,89 @@ pub async fn read_asset(well: String, id: String) -> Option<String> {
 
 // --- mcp ---------------------------------------------------------------------
 
+/// Args for [`mcp_info`]. `rename_all` is load-bearing: `allow_write` is
+/// multi-word, and Tauri maps camelCase JS keys onto snake_case Rust params —
+/// without it the command silently rejects the call.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct McpInfoArg {
+    well: String,
+    allow_write: bool,
+}
+
 /// Resolve the bundled `ido-mcp` sidecar for `well` and build copy-paste MCP
 /// client config (a `.mcp.json` snippet + a `claude mcp add` one-liner);
-/// `None` on error.
-pub async fn mcp_info(well: String) -> Option<McpInfo> {
-    deser(call("mcp_info", &WellArg { well }).await)
+/// `None` on error. `allow_write` puts `--allow-write` in the generated
+/// snippets — it produces text, and grants nothing on its own.
+pub async fn mcp_info(well: String, allow_write: bool) -> Option<McpInfo> {
+    deser(call("mcp_info", &McpInfoArg { well, allow_write }).await)
+}
+
+// --- semantic search --------------------------------------------------------
+//
+// The model download and the index build are long, so they are *started* by
+// one command and watched with [`job_status`] on a timer — the backend has no
+// event channel, deliberately (see `src-tauri/src/semantic.rs`).
+
+#[derive(Serialize)]
+struct SemanticInfoArg {
+    well: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SearchHybridArg {
+    well: String,
+    query: String,
+    mode: Option<String>,
+    limit: Option<u32>,
+}
+
+/// Whether semantic search can run here, the model it needs, and the state of
+/// `well`'s index. Pass `None` to ask about the build/model only.
+pub async fn semantic_info(well: Option<String>) -> Option<SemanticInfo> {
+    deser(call("semantic_info", &SemanticInfoArg { well }).await)
+}
+
+/// Start the one-time model download. Returns as soon as the job is claimed —
+/// poll [`job_status`] for progress. `Err` when a job is already running or
+/// this build has no semantic support.
+pub async fn download_model() -> Result<(), String> {
+    call_res("download_model", &()).await
+}
+
+/// Start (or refresh) `well`'s semantic index. Returns as soon as the job is
+/// claimed — poll [`job_status`] for progress.
+pub async fn build_index(well: String) -> Result<(), String> {
+    call_res("build_index", &WellArg { well }).await
+}
+
+/// The background job's current state; `None` only if the command itself
+/// failed, which a poller should treat as "nothing running".
+pub async fn job_status() -> Option<JobStatus> {
+    deser(call_bare("job_status").await)
+}
+
+/// Search `well`, hybrid by default, degrading to keyword — and saying so — if
+/// the semantic half can't run. `mode` is `"hybrid"` / `"semantic"` /
+/// `"keyword"`; `None` means hybrid.
+pub async fn search_hybrid(
+    well: String,
+    query: String,
+    mode: Option<String>,
+    limit: Option<u32>,
+) -> Option<SearchResponse> {
+    deser(
+        call(
+            "search_hybrid",
+            &SearchHybridArg {
+                well,
+                query,
+                mode,
+                limit,
+            },
+        )
+        .await,
+    )
 }
 
 // --- window ----------------------------------------------------------------

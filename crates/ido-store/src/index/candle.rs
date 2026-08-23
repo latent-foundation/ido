@@ -29,6 +29,19 @@ use super::embed::{Arch, Embedder, ModelSpec, Pooling, Role};
 /// per-call overhead that dominates a naive one-at-a-time loop.
 const MAX_BATCH: usize = 32;
 
+/// Ceiling on a batch's `count × seq²` — the shape of BERT's attention matrix,
+/// which is `count × heads × seq × seq` f32s. At 12 heads that makes this cap
+/// worth ~50 MB of peak allocation per forward pass.
+///
+/// **`MAX_BATCH` alone is not a memory bound**, which is the bug this exists to
+/// prevent: attention grows with the *square* of the batch's longest sequence,
+/// and `embed_with_progress` runs one batch per core. 32 full-length (512-token)
+/// chunks is a single 384 MB allocation; twelve of those in parallel asked for
+/// ~4.6 GB at once and aborted the process. Capping cells instead of rows keeps
+/// short-text batches big (where the throughput is) and shrinks only the long
+/// ones (where the memory is).
+const MAX_ATTENTION_CELLS: usize = 1 << 20;
+
 /// A resident model + tokenizer pair implementing [`Embedder`].
 pub struct CandleEmbedder {
     /// The registry entry this was loaded from — read on every `embed` for
@@ -157,27 +170,102 @@ impl Embedder for CandleEmbedder {
     }
 
     fn embed(&self, texts: &[String], role: Role) -> Result<Vec<Vec<f32>>, String> {
+        // The progress-reporting form with a no-op callback — see
+        // `embed_with_progress` for the parallel structure both share.
+        self.embed_with_progress(texts, role, &|_| {})
+    }
+
+    fn embed_with_progress(
+        &self,
+        texts: &[String],
+        role: Role,
+        on_batch: &(dyn Fn(usize) + Sync),
+    ) -> Result<Vec<Vec<f32>>, String> {
         let prefix = role_prefix(self.spec, role);
+        let tokens = |i: usize| estimated_tokens(&texts[i], self.spec.max_tokens);
+
+        // Sort by length before batching. Padding is `BatchLongest`, so a
+        // single 512-token chunk sharing a batch with short ones pads every
+        // row up to 512 — paying that length's memory *and* its compute for
+        // all of them. Grouping like with like is the memory fix and a
+        // throughput win at once, and costs only a permutation.
+        let mut order: Vec<usize> = (0..texts.len()).collect();
+        order.sort_by_key(|&i| tokens(i));
+        let batches = plan_batches(&order, tokens);
+
         // Batches run in parallel — §6.3's first named mitigation for the cold
         // build, and the one that actually moves the number here: candle's own
         // gemm threading barely engages at this model's matrix sizes (384-wide
         // hidden), so the cores sit idle unless whole forward passes overlap.
         // Sound because a forward pass only *reads* the model: `BertModel` and
         // `Tokenizer` are both `Sync`, and every tensor it builds is local to
-        // the batch.
+        // the batch. The `Result` collect short-circuits on the first failure.
         //
-        // `par_chunks` is an *indexed* parallel iterator, so collecting is
-        // order-preserving — threads reorder the work, never the output. The
-        // `Result` collect short-circuits on the first failing batch.
-        let batches: Vec<Vec<Vec<f32>>> = texts
-            .par_chunks(MAX_BATCH)
+        // `on_batch` fires once per batch, from whichever rayon worker thread
+        // finished it — that's why the trait requires `Sync`. Batches do not
+        // finish in submission order, so callers must treat progress as a
+        // running total, never assume batch N reports before batch N+1.
+        let embedded: Vec<Vec<Vec<f32>>> = batches
+            .par_iter()
             .map(|batch| {
-                let prefixed: Vec<String> = batch.iter().map(|t| with_prefix(prefix, t)).collect();
-                self.embed_batch(&prefixed)
+                let prefixed: Vec<String> = batch
+                    .iter()
+                    .map(|&i| with_prefix(prefix, &texts[i]))
+                    .collect();
+                let out = self.embed_batch(&prefixed)?;
+                on_batch(batch.len());
+                Ok(out)
             })
             .collect::<Result<_, String>>()?;
-        Ok(batches.into_iter().flatten().collect())
+
+        // Scatter back into the caller's order: the sort above was for the
+        // machine's benefit, and no caller should have to know it happened.
+        let mut out: Vec<Vec<f32>> = vec![Vec::new(); texts.len()];
+        for (batch, vectors) in batches.iter().zip(embedded) {
+            for (&i, vector) in batch.iter().zip(vectors) {
+                out[i] = vector;
+            }
+        }
+        Ok(out)
     }
+}
+
+/// A rough token count, for batching decisions only. BERT wordpiece averages
+/// ~4 characters per token on English prose; dividing by 3 deliberately
+/// over-estimates, because guessing high only makes a batch smaller — and the
+/// failure this feeds is an out-of-memory abort, not a wrong vector.
+fn estimated_tokens(text: &str, max_tokens: usize) -> usize {
+    // Truncation caps the real sequence, so no estimate above it is meaningful.
+    (text.len() / 3).clamp(1, max_tokens)
+}
+
+/// Group an already-length-sorted `order` into batches that respect both
+/// [`MAX_BATCH`] and [`MAX_ATTENTION_CELLS`].
+///
+/// A batch's cost is `count × seq²`, where `seq` is its longest member — so
+/// the running check uses the longest sequence *including* the candidate. A
+/// single text that busts the budget on its own still forms a batch of one:
+/// there is nothing smaller to split it into, and the tokenizer's truncation
+/// already bounds how bad it can get.
+fn plan_batches(order: &[usize], tokens: impl Fn(usize) -> usize) -> Vec<Vec<usize>> {
+    let mut batches: Vec<Vec<usize>> = Vec::new();
+    let mut current: Vec<usize> = Vec::new();
+    let mut longest = 0usize;
+    for &i in order {
+        let seq = tokens(i).max(longest);
+        let full = current.len() >= MAX_BATCH;
+        let over_budget = (current.len() + 1) * seq * seq > MAX_ATTENTION_CELLS;
+        if !current.is_empty() && (full || over_budget) {
+            batches.push(std::mem::take(&mut current));
+            longest = 0;
+        }
+        longest = longest.max(tokens(i));
+        current.push(i);
+    }
+    if !current.is_empty() {
+        batches.push(current);
+    }
+    batches
 }
 
 /// The prefix `role` gets under `spec` — §6.3's second silent quality bug:
@@ -226,6 +314,83 @@ fn tensor_err(e: candle_core::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every index appears exactly once, and no batch exceeds either bound.
+    fn check_plan(lengths: &[usize]) -> Vec<Vec<usize>> {
+        let mut order: Vec<usize> = (0..lengths.len()).collect();
+        order.sort_by_key(|&i| lengths[i]);
+        let batches = plan_batches(&order, |i| lengths[i]);
+
+        let mut seen: Vec<usize> = batches.iter().flatten().copied().collect();
+        seen.sort_unstable();
+        assert_eq!(
+            seen,
+            (0..lengths.len()).collect::<Vec<_>>(),
+            "every text is embedded exactly once"
+        );
+        for batch in &batches {
+            assert!(batch.len() <= MAX_BATCH, "row cap");
+            let seq = batch.iter().map(|&i| lengths[i]).max().unwrap_or(0);
+            assert!(
+                batch.len() == 1 || batch.len() * seq * seq <= MAX_ATTENTION_CELLS,
+                "a batch of {} at seq {seq} busts the attention budget",
+                batch.len()
+            );
+        }
+        batches
+    }
+
+    #[test]
+    fn short_texts_fill_whole_batches() {
+        // 64 short chunks: the cell budget is nowhere near binding, so the row
+        // cap is what decides — two full batches, no throughput given away.
+        let batches = check_plan(&[40; 64]);
+        assert_eq!(batches.len(), 2);
+        assert!(batches.iter().all(|b| b.len() == MAX_BATCH));
+    }
+
+    #[test]
+    fn long_texts_batch_small_enough_to_fit_in_memory() {
+        // The case that aborted the app: 32 full-length chunks must NOT become
+        // one batch, because that single allocation is ~384 MB.
+        let batches = check_plan(&[512; 32]);
+        assert!(
+            batches.len() > 1,
+            "512-token chunks cannot share one 32-row batch"
+        );
+        assert!(batches.iter().all(|b| b.len() <= 4), "{batches:?}");
+    }
+
+    #[test]
+    fn one_oversized_text_still_gets_embedded() {
+        let batches = check_plan(&[4096]);
+        assert_eq!(batches, vec![vec![0]], "a batch of one is the floor");
+    }
+
+    #[test]
+    fn mixed_lengths_keep_long_chunks_out_of_short_batches() {
+        // Sorting is what stops one long chunk from padding 31 short ones up
+        // to its length — the compute half of the same bug.
+        let mut lengths = vec![30usize; 40];
+        lengths.push(512);
+        let batches = check_plan(&lengths);
+        let long_batch = batches
+            .iter()
+            .find(|b| b.iter().any(|&i| lengths[i] == 512))
+            .expect("the long chunk landed somewhere");
+        assert_eq!(long_batch.len(), 1, "it does not drag short chunks with it");
+    }
+
+    #[test]
+    fn estimated_tokens_is_capped_and_never_zero() {
+        assert_eq!(estimated_tokens("", 512), 1, "an empty text is still a row");
+        assert_eq!(estimated_tokens(&"x".repeat(300), 512), 100);
+        assert_eq!(
+            estimated_tokens(&"x".repeat(100_000), 512),
+            512,
+            "truncation bounds the real sequence, so the estimate stops there"
+        );
+    }
     use crate::index::embed::DEFAULT_MODEL;
 
     #[test]
