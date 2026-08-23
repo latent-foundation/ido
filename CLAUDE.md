@@ -40,11 +40,13 @@ restate or fork the upstream layers here.
 Four packages in one Cargo workspace:
 - root crate **`ido-ui`** — the Leptos frontend; `index.html` is the Trunk entry point.
 - **`crates/ido-store`** — the tauri-free **local-first store** (no tauri, no wasm): all store
-  logic and its 81-test suite live here, so the app and the MCP server share one implementation
-  of "how a task file is parsed".
-- **`crates/ido-mcp`** — a **read-only MCP stdio server** over the store: seven tools, keyword
-  search, shipped inside the app as a Tauri sidecar — see the **MCP** paragraph under Current
-  state and [docs/mcp-server.md](docs/mcp-server.md).
+  logic and its 145-test suite live here, so the app and the MCP server share one implementation
+  of "how a task file is parsed" — including, since P2, the **semantic index** (`index/`:
+  chunking, embedding, vectors, RRF fusion) behind a `semantic` cargo feature.
+- **`crates/ido-mcp`** — an **MCP stdio server** over the store: seven read-only tools (plus four
+  never-destructive write tools behind `--allow-write`), **hybrid (semantic + keyword) search**,
+  `ido://` resources and two prompts, shipped inside the app as a Tauri sidecar — see the **MCP**
+  paragraph under Current state and [docs/mcp-server.md](docs/mcp-server.md).
 - **`src-tauri/`** — the Tauri shell: `commands.rs` is a wall of one-line `#[tauri::command]`
   wrappers over `ido_store::*` (same command names + arg shapes, so the frontend `ipc` layer
   never noticed the split), beside the genuinely-Tauri modules (`window` / `external` /
@@ -90,7 +92,17 @@ Four packages in one Cargo workspace:
     the sectioned folders, invisible to the notes tree) for pasted/dropped images, referenced from
     any section's markdown as `![](assets/foo.png)`. `read_asset` returns a `data:` URI (the
     frontend can't reach the filesystem directly to load one as a plain file path).
-  - **search:** `search` (one command; brute-force scan of notes + wiki + tasks → ranked `SearchHit`s).
+  - **search:** `search_hybrid` (one command; `mode` = `hybrid` default / `semantic` / `keyword`,
+    returning the hits *plus which retrieval actually ran*, so the palette can only claim semantic
+    when it got it). The keyword-only `search` command was removed in P3 — `search_hybrid`'s
+    keyword mode is that same scan. It is `async` because a hybrid/semantic search **refreshes a
+    stale index first** — see the semantic-search paragraph under Current state.
+  - **semantic:** `semantic_info` (can it run here, the model, this well's index) / `download_model`
+    / `build_index` / `job_status` — the last three drive one background job slot, polled rather
+    than pushed (`src-tauri/src/semantic.rs`).
+  - **version:** none — the frontend reads `env!("CARGO_PKG_VERSION")` directly
+    (`components::settings::VERSION`), which is honest only because every crate inherits one
+    `[workspace.package] version`. See the version rule below.
   - **session:** `read_session` / `write_session` (open tabs, cached in `.ido/session.toml`).
   - **window:** `apply_window` / `show_window` / `win_minimize` / `win_toggle_maximize` / `win_close`.
   - **external:** `open_external` (open a URL in the OS browser).
@@ -103,19 +115,27 @@ Four packages in one Cargo workspace:
 
 Every package is split into small, documented modules (module-level `//!` + item `///` docs):
 - **Store** (`crates/ido-store/src/`): `lib` wires modules; `model` (shapes), `paths` (pure
-  id/name/**slug** helpers + tests), `frontmatter` (minimal `--- key: value ---` parse/merge +
-  tests), `wells` (open/create/**migrate** + scaffold + `well.toml` settings + tests), `notes`
+  id/name/**slug** helpers + `confined`, the canonicalized well-prefix check + tests),
+  `frontmatter` (minimal `--- key: value ---` parse/merge — `merge` **flattens every value to one
+  line**, since a newline in a value would otherwise round-trip as a second field + tests), `wells` (open/create/**migrate** + scaffold + `well.toml` settings + tests), `notes`
   (tree + CRUD + tests), `wiki` (flat pages + **cross-section** backlinks + tests), `tasks`
-  (kanban + goals over frontmatter + tests), `repeat` (pure recurrence-spec parse + `advance`
+  (kanban + goals over frontmatter + tests), `index` (the **semantic index**: `chunk` /
+  `embed` / `fusion` / `store`, plus `candle` + `download` behind the `semantic` feature —
+  see the **Semantic search** paragraph), `repeat` (pure recurrence-spec parse + `advance`
   date math on chrono's `NaiveDate` + tests), `assets` (the shared image-attachment store +
   tests), `search` (cross-section scan + tests), `session`.
 - **Tauri backend** (`src-tauri/src/`): `lib` wires the handlers + `run()`; `commands` (the
   one-line wrapper wall), `registry` (recent wells, `wells.json`), `window` (custom-chrome
-  window control), `external` (OS browser), `mcp` (sidecar resolver + client-config snippets).
+  window control), `external` (OS browser), `mcp` (sidecar resolver + client-config snippets),
+  `semantic` (the model download / index build / hybrid query, behind a `semantic` feature that
+  is **on by default** — the app is the reason the feature exists).
 - **MCP server** (`crates/ido-mcp/src/`): `main` (arg parsing + well resolution + stdio serve),
-  `server` (the rmcp handler: fixed tool order, descriptions, instructions), `tools` (the seven
-  read-only tool bodies over `ido_store`), `render` (markdown responses: bounds, paging, content
-  delimiters).
+  `server` (the rmcp handler: fixed tool order, descriptions, instructions, and the
+  resource/prompt handlers), `tools` (the seven read-only tool bodies over `ido_store`), `write`
+  (the four gated write bodies + `guard_writes`), `resources` (`ido://` uri parse/format + the
+  bounded recency listing), `prompts` (`daily_review` / `weekly_digest`), `render` (markdown
+  responses: bounds, paging, content delimiters), `semantic` (the embedder handle +
+  index-freshness policy), `maintenance` (the `--reindex` / `--eval` subcommands).
 - **Frontend** (`src/`): `model`, `ipc` (**the only place that calls `invoke`** — typed wrappers +
   arg structs), `state` (one `Copy` `State` of all signals via Leptos context; backend work lives in
   its action methods. Editing state lives on a `Pane` — `panes: [Pane; 2]` for split view — and the
@@ -170,6 +190,8 @@ just check         # cargo clippy --workspace -- -D warnings (stages the sidecar
 just test          # cargo test -p ido-store, -p ido, -p ido-mcp (three suites; sidecar first)
 just mcp           # run ido-mcp against the most recent well
 just mcp-inspect   # run ido-mcp under the MCP inspector for protocol-level debugging
+just eval          # score keyword/semantic/hybrid retrieval + apply the §6.7 gate
+just reindex       # rebuild the most recent well's semantic index from scratch
 just sidecar       # build release ido-mcp and stage as Tauri sidecar binary
                    # (a dependency of check/test/dev — see the rule below)
 just dev           # cargo tauri dev: Trunk on :1420 + native window, hot reload (builds sidecar first)
@@ -196,14 +218,29 @@ cargo check -p ido-ui                      # fast type-check of just the fronten
   `git config core.hooksPath .githooks`. CI (`.github/workflows/ci.yml`) runs `just verify` on
   Ubuntu with Tauri's webkit deps installed.
 - **Tests:** three suites, all in `just verify`.
-  - **Store** (`cargo test -p ido-store` / 81 tests): tempdir-based unit tests across `paths`,
+  - **Store** (`cargo test -p ido-store` / 164 tests, 182 with `--features semantic`): tempdir-based unit tests across `paths`,
     `frontmatter`, `notes`, `wiki` (incl. cross-section backlinks), `tasks` (+ goals), `search`,
-    `wells` migration, `session` — the real suite. Store fns take plain args (no mock runtime).
-  - **App** (`cargo test -p ido` / 2 tests): the `mcp_info` command's snippet building
-    (JSON escaping of Windows paths, well round-trip).
-  - **MCP** (`cargo test -p ido-mcp` / 14 tests): 12 unit + 2 integration — an rmcp client spawns
+    `wells` migration, `session`, and `index` (chunking / vector storage / fusion / the eval
+    metrics, all provable without the model via a deterministic `FakeEmbedder`) — the real suite.
+    Store fns take plain args (no mock runtime).
+  - **App** (`cargo test -p ido` / 10 tests): the `mcp_info` command's snippet building
+    (JSON escaping of Windows paths, well round-trip, and that the generated snippet enables writes
+    only when asked), the background job slot (a second job is refused, a late progress tick after
+    a job ends is dropped, a failure survives until the next job starts), and the search-time index
+    refresh (the debounce admits one caller, a search never builds a missing index, a running
+    settings job wins).
+  - **MCP** (`cargo test -p ido-mcp` / 58 tests): 44 unit + 14 integration — an rmcp client spawns
     the real binary and drives it over stdio against a tempdir well, and one test snapshots the
-    well before/after a session to prove the server never writes.
+    well before/after a session to prove the **default** binary never writes (which is now the
+    proof the `--allow-write` gate works). (With `--features semantic` a
+    second snapshot test proves the only writes are the rebuildable cache under `.ido/index/`;
+    **well content is never touched either way**.) Integration tests also cover resource
+    templates/list/read — including that a resource read returns *byte-identical* text to the
+    `get_entry` tool for the same id — and both prompts.
+  - **Semantic** (`cargo test -p ido-store --features semantic`, and the same for `-p ido-mcp`):
+    both are in `just verify`, since `--workspace` only ever sees default features and the whole
+    candle path would otherwise go unlinted. Tests needing the ~133 MB model on disk are
+    `#[ignore]`d — run them with `-- --ignored` (that's the known-vector gate).
   - **Frontend** (`cargo test -p ido-ui`): pure-Rust unit tests in `src/blocks.rs` (segmentation /
     splice), `src/markdown.rs` (slugify + wikilink expansion), `src/dates.rs` (the shared date
     math), `components/tasks/logic.rs` (due/sort/overdue/tag helpers), `components/tasks/calendar.rs`
@@ -262,6 +299,22 @@ cargo check -p ido-ui                      # fast type-check of just the fronten
   through `State::open_link`: internal `[[wikilinks]]` (`ido:wiki/<slug>`) open/create the page in a
   tab; everything else goes to `open_external` (OS browser). A navigated webview white-screens the
   app. Raw HTML in notes is rendered as text, not executed (see `markdown.rs`).
+- **The index manifest's `sha256` strings are an on-disk format, not a display choice.**
+  `index::store::hex` writes them and the next rebuild compares against them, so lowercase /
+  unseparated / zero-padded is load-bearing: change it and nothing errors — every file just looks
+  modified and every well silently re-embeds from scratch. It is hand-written rather than
+  `format!("{:x}", …)` because `Digest::finalize`'s array type differs per `digest` major and 0.11's
+  doesn't implement `LowerHex` (this is what the sha2 0.10 → 0.11 bump broke). Two published
+  SHA-256 vectors pin it in `store.rs`'s tests; `download.rs` uses the same encoder for its
+  download pins rather than a second copy.
+- **There is exactly one version number, and it lives in `[workspace.package]`** in the root
+  [Cargo.toml](Cargo.toml). All four crates inherit it (`version.workspace = true`), so bumping a
+  release is one line. This is not just tidiness: `tauri.conf.json` omits `version` (Tauri derives
+  the installer's from the `ido` crate) **and** the frontend renders `env!("CARGO_PKG_VERSION")`
+  from `ido-ui` in the settings modal and on the launcher — so without the inheritance those two
+  could disagree and the app would confidently show the wrong version. `.github/workflows/release.yml`
+  reads the same table and refuses to build a tag that doesn't match it. If you ever undo the
+  inheritance, replace the frontend constant with a Tauri command in the same change.
 - **Both crates are edition 2024**, matching the ecosystem convention in
   `vendor/latent-design/docs/conventions.md`. Two consequences bite in practice: `gen` is a
   **reserved keyword** (generation-counter locals are named `this_gen`, not `gen`), and **let-chains
@@ -466,41 +519,128 @@ anywhere) doesn't navigate the webview instead of being silently ignored.
 
 **MCP** — the well is readable by any MCP client via `crates/ido-mcp`: seven read-only tools
 (`well_info` / `search` / `get_entry` / `list_entries` / `backlinks` / `list_tasks` /
-`list_goals`), keyword search only until P2, one well per process (`--well` flag → `IDO_WELL`
+`list_goals`), **hybrid search** (see the next paragraph), one well per process (`--well` flag → `IDO_WELL`
 env → most-recent registry entry). Ids round-trip between tools, bodies are delimited and framed
 as data-not-instructions, path-traversal ids are rejected, and responses are bounded with
-explicit paging. The binary ships inside the app as a **Tauri sidecar** (`bundle.externalBin`;
+explicit paging. Every entry is also addressable as a **resource** (`ido://note/{path}` /
+`ido://wiki/{slug}` / `ido://task/{id}` / `ido://goal/{id}`; `resources/read` calls the *same*
+`get_entry` body, and `resources/list` is bounded to the 50 most-recently-modified), and two
+**prompts** — `daily_review` and `weekly_digest` — compose the existing reads into ready-to-triage
+summaries. The binary ships inside the app as a **Tauri sidecar** (`bundle.externalBin`;
 staged by `just sidecar`, which `dev`/`dev-debug` run automatically), and the settings modal's
 **"agent access — mcp"** section (`mcp_info`) shows the resolved binary path + copyable
 `.mcp.json` / `claude mcp add` snippets (server name `ido`, one registration per well — a
 second well needs a distinct name, since ids carry no well and the server name is the client's
-only disambiguator).
+only disambiguator). A **"let agents add to this well"** checkbox regenerates both snippets with
+`--allow-write`. It is a *snippet generator, not a permission*: nothing changes until the user
+pastes the config into their own client, which is why it is neither persisted nor remembered — it
+re-defaults to off every time the modal closes, so the safe posture is the one you get without
+deciding anything.
 
 **`.mcp.json` is gitignored** — it names *this* machine's well folders, so it can't be shared.
 [.mcp.json.example](.mcp.json.example) is the committed template: copy it to `.mcp.json` after
 cloning and fix up the paths. It registers **two dev servers, both with `--well` pinned
 explicitly** — never via the registry fallback, which would silently re-point them at whatever
 well was last opened in the app:
-- **`ido-dev`** → [dev-well/](dev-well/), a committed fixture well built to exercise all seven
-  tools (notes in folders, linked wiki pages incl. a dead `[[link]]`, tasks across every column
-  plus a backlog / orphan-status / archived one, recurring + checklist tasks, dated and archived
-  goals). Scratch data — edit it freely to reproduce a bug.
-- **`ido-docs`** → the project's own docs well, read-only dogfooding. The only genuinely
-  machine-specific entry (an absolute path); the template ships a placeholder.
+- **`ido-dev`** → [dev-well/](dev-well/), a committed fixture well built to exercise every tool
+  (notes in folders, linked wiki pages incl. exactly one dead `[[link]]`, tasks across every column
+  plus a backlog / orphan-status / archived one, recurring + checklist tasks, a **permanently
+  overdue** task so the `daily_review` prompt has something to triage, dated and archived goals).
+  Scratch data — edit it freely to reproduce a bug. This is the **`--allow-write`** entry: writes
+  land in throwaway, git-recoverable data, and it is the only way to drive the write tools from a
+  real client. A *separate* write-enabled server was the obvious alternative and is the wrong shape
+  — two servers on one well advertise two identical `search`/`get_entry` pairs, which is exactly
+  the "overlapping tools make the model pick badly" failure §5.1 warns about.
+- **Both entries build with `--features semantic`**, so a client sees the same hybrid search the
+  shipped sidecar does. Without it the dev servers are keyword-only and silently diverge from
+  production — `well_info` says so, but only if you read it. The cost is one slower first build in
+  the separate `target/mcp-dev` directory.
+- **`ido-docs`** → the project's own docs well, read-only dogfooding — **deliberately without
+  `--allow-write`**: that one holds real writing, and the fixture is what scratch edits are for.
+  The only genuinely machine-specific entry (an absolute path); the template ships a placeholder.
 
 Neither is named `ido`, so they can't shadow a user-scoped `ido` registration for a real well,
 and the tool namespace (`mcp__ido-dev__…`) names which well answered. Both set
 `CARGO_TARGET_DIR=target/mcp-dev` so a client spawning them never blocks on the build-directory
 lock held by `just dev` or `just verify`.
 
-Deferred by design: resources, prompts, writes, and the `mode` search param
+**Writes are off unless asked for** (`--allow-write`, P4): four tools — `create_entry` (note or
+wiki page), `append_to_entry`, `create_task`, `update_task_field` — and **none of them can
+destroy anything**. No delete, no overwrite or truncation (an existing body can only be appended
+to), a task edited one named field at a time, and a colliding slug uniquifies rather than
+clobbering. The gate is **structural and additive**: a second `#[tool_router]` block holds the
+write tools and is merged only in write mode, so without the flag those routes do not exist —
+the inverse shape (build everything, remove the write tools) fails dangerously rather than
+harmlessly. `write::guard_writes` then re-checks inside every body, because nothing in the
+protocol stops a client calling a name it never saw. Ids are confined twice: `render::guard_id`
+lexically at the boundary, then `paths::confined` canonically in the store (which canonicalizes
+the nearest existing ancestor, so a symlink out of the well is caught before the leaf exists).
+
+Nothing is deferred from the design doc any more except the `mode` search param's UI surface
 (see [docs/mcp-server.md](docs/mcp-server.md)).
 
-**What's next** — MCP P0 (store extraction) + P1 (read-only server) + the non-semantic P3 slice
-(sidecar + settings surface) have landed; the next step is **P2 — the semantic index**
-([docs/mcp-server.md](docs/mcp-server.md)): candle embeddings, hybrid RRF fusion, `mode` on
-`search`, the eval harness — then the rest of P3 (model download UI, in-app semantic search)
-and P4 (gated writes, resources/prompts).
+**Semantic search** — `search` takes a **`mode`** (`hybrid` default / `semantic` / `keyword`).
+The store owns the whole stack (`crates/ido-store/src/index/`): a **heading-scoped chunker**
+(pulldown-cmark offset events, so a fenced code block is one atomic unit and never mistaken for
+structure; each chunk is embedded with its `title › H2 › H3` path prefixed, which is what makes an
+isolated chunk legible), a **candle** embedder running `BAAI/bge-small-en-v1.5` on CPU (CLS
+pooling + BGE's asymmetric query prefix — both read from one `ModelSpec`, because getting either
+wrong yields a working, normalized, quietly mediocre index), and a brute-force cosine sweep over
+`.ido/index/` (`manifest.json` + `vectors.bin` + `chunks.jsonl`; **no ANN index** — a personal
+well is orders of magnitude too small for HNSW to earn its complexity). The two halves fuse with
+**reciprocal rank fusion** (`k = 60`, never tuned). Rebuilds are **incremental** — `(mtime, size)`
+then sha256 per file, under an advisory lock — and either process may rebuild.
+**Everything degrades honestly:** no `semantic` feature, no downloaded model, or no index means
+keyword results plus a stated reason, never an error, and `well_info` reports which modes are
+live. On the committed eval well (`just eval`), hybrid scores **0.946 recall@5 vs keyword's
+0.462**, and on the paraphrase queries — whose wording shares no content word with the target —
+keyword scores **0.000** against hybrid's 0.929. The embedder is pinned by a **known-vector test**
+against `sentence-transformers` (matches to 1.6e-7). Model weights live in
+`<app_data_dir>/latent.ido/models/`, are shared across wells, and are fetched **once**,
+user-triggered, from a sha256-pinned revision — the only network event in the system's life.
+
+**In-app semantic search (P3)** — the settings modal's **"semantic search"** section walks the
+whole path in one panel: download the model (naming it and its size, and saying plainly that this
+is the only time ido uses the network), build this well's index, then show
+`N chunks across M files · built <date>` with a quiet marker when the well has changed since.
+The model download and the index build are **one background job slot** (`src-tauri/src/semantic.rs`)
+— a second job is refused with a message naming what is already running — and progress is
+**polled, not pushed**: the app has no Tauri event plumbing, and a poll costs one command per tick
+and cannot drop an update where an event stream would add a capability, a listener, and a
+lost-event failure mode for one panel. The **`Ctrl+K` palette is hybrid**, badging the retrieval
+that *actually* answered (read off the backend response, so it can never claim semantic results it
+did not get; keyword stays unbadged rather than adding noise). Everything degrades the same way the
+MCP server does — no feature, no model, or no index means keyword results plus a stated reason.
+
+**Keeping the index fresh** — editing a note or page writes the file and nothing else; there is no
+re-embed on save (the editor autosaves on every keystroke, so that would be absurd). Freshness is a
+**serving** concern instead, handled exactly where `ido-mcp` handles it: before a hybrid/semantic
+search, `backend::refresh` sweeps if the index is stale and 30 s have passed since the last sweep
+(the same `SWEEP_DEBOUNCE` the server uses, so a well served by both behaves one way).
+`update_index` is incremental and lock-guarded, so the common case re-embeds one file. Two rules
+the app adds that the server does not: it **never creates an index that doesn't exist** (that is
+minutes of CPU and a 133 MB download — the user opts into it in settings, a keystroke must not
+start it), and it **defers to a running settings job**. A lock held by the other process is not an
+error on either side: the work is happening, so answer from the index you have.
+
+**What's next** — **the whole MCP roadmap has shipped**: P0 (store extraction), P1 (read-only
+server), P2 (the semantic index), P3 (packaging + the in-app surface), and P4 (gated writes,
+resources, prompts) ([docs/mcp-server.md](docs/mcp-server.md)). P4's three optional extras were
+**declined with reasons written down** — reranking (hybrid is already at 0.946 recall@5; 0.054 of
+headroom doesn't justify a second model, a second known-vector gate, and per-query latency),
+int8 quantization (a measured 400-chunk index is 910 KB all in, of which the vectors — the only
+part quantizing touches — are 614 KB; nothing to save), and `list_wells`
+(one well per process stands; a client registers two servers, which also makes the tool namespace
+say which well answered). The **EmbeddingGemma revisit** was rechecked against
+candle-transformers 0.11.0 and its trigger has **not** fired — there is still no Gemma *encoder*
+(`gemma3.rs` and the new `gemma4/text.rs` both build strictly causal masks; `gemma4`'s
+`use_bidirectional_attention` config field only halves the sliding window, and
+`gemma4/multimodal_embedding.rs` is the vision/audio projector, not a text retrieval encoder).
+Both P2 follow-ups are closed: the sidecar now builds **with** `--features semantic` (P3's
+download UI fills the shared model cache it reads), and the cold build cleared its bar —
+length-bucketed batching made indexing ~4× faster (~20 chunks/sec, so ~4 min per 5,000 chunks),
+which also fixed a crash where parallel batches of full-length chunks could ask for ~4.6 GB at
+once. Remaining levers if it ever matters again: macOS `metal`/`accelerate`, or a smaller model.
 Also open: the calendar's remaining phases (ICS export, read-only external feeds), small rough
 edges (N-way / persisted split, deeper goal-status surfacing), and the other bigger bets, none
 started: **local-LLM / Gemma** in-app assistance (on-device, private) and **web sync**

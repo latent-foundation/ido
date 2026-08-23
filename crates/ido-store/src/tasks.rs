@@ -468,6 +468,21 @@ pub fn update_task_body(well: String, id: String, body: String) -> Result<(), St
     edit_task(&well, &id, |_, b| *b = body)
 }
 
+/// Append `text` to task `id`'s markdown body, leaving its frontmatter
+/// untouched. Unlike [`crate::notes::append_note`] / [`crate::wiki::append_page`],
+/// this does **not** create a task from nothing on a missing id — a task
+/// carries required structure (`status`, a board column to sit in) that an
+/// append has no way to supply, so MCP's write surface only ever appends to
+/// a task it already found via `list_tasks` (`docs/mcp-server.md` §8: task
+/// edits are field-level; a missing `id` surfaces as the same read error
+/// [`update_task_body`] would give).
+pub fn append_task_body(well: String, id: String, text: String) -> Result<(), String> {
+    let id = crate::paths::valid_name(&id)?;
+    edit_task(&well, id, |_, body| {
+        *body = crate::paths::append_text(body, &text);
+    })
+}
+
 /// Retitle task `id` to `name` (free text, stored as `title:`), re-slugging the
 /// file to match. A colliding slug is uniquified (duplicate titles are fine), and
 /// a punctuation-only title keeps the current file name. Returns the (new) id.
@@ -617,6 +632,16 @@ pub fn set_goal_field(well: String, id: String, key: String, value: String) -> R
 /// Replace a goal's markdown body, preserving its frontmatter.
 pub fn update_goal_body(well: String, id: String, body: String) -> Result<(), String> {
     edit_md(goal_path(&well, &id), |_, b| *b = body)
+}
+
+/// Append `text` to goal `id`'s markdown body, leaving its frontmatter
+/// untouched. Same "no create-from-nothing" rule as [`append_task_body`] — a
+/// missing `id` is an error, not a fresh goal.
+pub fn append_goal_body(well: String, id: String, text: String) -> Result<(), String> {
+    let id = crate::paths::valid_name(&id)?;
+    edit_md(goal_path(&well, id), |_, body| {
+        *body = crate::paths::append_text(body, &text);
+    })
 }
 
 /// Retitle goal `id` to `name` (free text, stored as `title:`), re-slugging the
@@ -784,6 +809,48 @@ mod tests {
         // Clearing a field removes it.
         set_task_field(w.clone(), a.clone(), "priority".into(), "".into()).unwrap();
         assert_eq!(find(&list_tasks(w), &a).priority, "");
+    }
+
+    #[test]
+    fn append_task_body_grows_body_and_leaves_frontmatter_intact() {
+        let (_d, w) = well();
+        let a = create(&w, "todo");
+        set_task_field(w.clone(), a.clone(), "priority".into(), "high".into()).unwrap();
+        set_task_field(w.clone(), a.clone(), "tags".into(), "bug, ui".into()).unwrap();
+        update_task_body(w.clone(), a.clone(), "first line".into()).unwrap();
+
+        append_task_body(w.clone(), a.clone(), "second line".into()).unwrap();
+
+        let t = find(&list_tasks(w.clone()), &a).clone();
+        assert_eq!(t.body, "first line\n\nsecond line\n");
+        // Frontmatter fields set before the append are untouched.
+        assert_eq!(t.priority, "high");
+        assert_eq!(t.tags, vec!["bug".to_string(), "ui".into()]);
+        assert_eq!(t.status, "todo");
+
+        // A missing task is an error, not a silently-created one — appends
+        // never invent the required structure (status/title) a task needs.
+        assert!(append_task_body(w, "nope".into(), "x".into()).is_err());
+    }
+
+    #[test]
+    fn append_goal_body_grows_body_and_leaves_frontmatter_intact() {
+        let (_d, w) = well();
+        fs::create_dir_all(goals_dir(&w)).unwrap();
+        let g = create_goal(w.clone()).unwrap();
+        set_goal_field(w.clone(), g.clone(), "target".into(), "2026-12-01".into()).unwrap();
+        update_goal_body(w.clone(), g.clone(), "definition of done".into()).unwrap();
+
+        append_goal_body(w.clone(), g.clone(), "more detail".into()).unwrap();
+
+        let goal = list_goals(w.clone())
+            .into_iter()
+            .find(|goal| goal.id == g)
+            .unwrap();
+        assert_eq!(goal.body, "definition of done\n\nmore detail\n");
+        assert_eq!(goal.target, "2026-12-01");
+
+        assert!(append_goal_body(w, "nope".into(), "x".into()).is_err());
     }
 
     #[test]

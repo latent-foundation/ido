@@ -115,6 +115,18 @@ pub fn SearchPalette() -> impl IntoView {
                                     }
                                 }
                             />
+                            {move || {
+                                let mode = state.search_mode.get();
+                                matches!(mode.as_str(), "hybrid" | "semantic")
+                                    .then(|| {
+                                        // Truthful, not decorative: this reads what the
+                                        // backend said actually answered, so it can
+                                        // never claim semantic retrieval the query did
+                                        // not get. Keyword is the silent default —
+                                        // badging it would just add noise.
+                                        view! { <span class="ido-search-mode">{mode}</span> }
+                                    })
+                            }}
                         </div>
                         <div class="ido-search-results">
                             {move || {

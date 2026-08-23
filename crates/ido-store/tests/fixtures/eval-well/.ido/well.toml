@@ -1,0 +1,8 @@
+schema = 1
+columns = ["todo", "planning", "in-progress", "done"]
+views = []
+
+[sections]
+notes = true
+tasks = true
+wiki = true

@@ -1,9 +1,9 @@
 [package]
 name = "ido"
-# The single source of truth for the app version: `tauri.conf.json` deliberately
-# omits `version`, so Tauri derives the bundle/installer version from here.
-# A release tag `vX.Y.Z` must match this.
-version = "1.1.0"
+# Inherited from the workspace (`../../Cargo.toml`), which is the single
+# source of truth for the app version. Tauri derives the bundle/installer
+# version from this crate, so bumping the workspace bumps the installer.
+version.workspace = true
 description = "ido is a minimalistic productivity tool for managing tasks and projects, with notes and wikis."
 authors = ["Maksymilian Neumann <neumann.maks@gmail.com>"]
 edition = "2024"
@@ -20,6 +20,16 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+# In-app semantic search (docs/mcp-server.md P3) — the model download, the
+# index build, and hybrid queries in the Ctrl+K palette. **On by default**:
+# it is a headline feature of the app, so the graceful-degradation path in
+# `semantic.rs` exists for builds that deliberately turn it off, not for the
+# normal case. Costs the candle tree (a ~2-minute cold compile, cached after)
+# and ~5 MB of binary; the model weights are never in the executable.
+default = ["semantic"]
+semantic = ["ido-store/semantic"]
+
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
@@ -30,3 +40,8 @@ serde_json = "1"
 # The tauri-free local-first store (notes/wiki/tasks/wells/search/session);
 # this crate wraps it in `#[tauri::command]`s. See `crates/ido-store`.
 ido-store = { path = "../crates/ido-store" }
+
+[dev-dependencies]
+# Tempdir wells for the semantic refresh tests (the store's own suite uses it
+# the same way).
+tempfile = "3"

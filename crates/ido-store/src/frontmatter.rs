@@ -54,6 +54,32 @@ pub fn parse(src: &str) -> (BTreeMap<String, String>, String) {
     (fields, body)
 }
 
+/// Flatten a value onto one line, which is what this format can actually
+/// represent: [`parse`] reads one `key: value` per line, so a newline inside a
+/// value does not round-trip — it becomes **a second field**. That is a
+/// privilege escalation, not a formatting wrinkle: a title of
+/// `urgent\ncompleted: 2026-01-01` writes a completion stamp nobody asked for,
+/// and a bare `---` closes the header early and turns the rest of the
+/// frontmatter into body text.
+///
+/// Callers should reject such input with a real error — `ido-mcp`'s write
+/// tools do, since an agent that sent it deserves to be told. But the
+/// invariant belongs *here* too, where it cannot be forgotten by the next
+/// caller: this is the only function that renders the format, so it is the
+/// only place the guarantee can be unconditional.
+fn single_line(value: &str) -> String {
+    if value.chars().any(char::is_control) {
+        value
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect::<String>()
+            .trim()
+            .to_string()
+    } else {
+        value.to_string()
+    }
+}
+
 /// Re-emit `fields` + `body` as a document. With no fields, returns the body
 /// unchanged (no empty `--- ---` block). Keys are emitted sorted (BTreeMap), so
 /// output is deterministic.
@@ -65,7 +91,7 @@ pub fn merge(fields: &BTreeMap<String, String>, body: &str) -> String {
     for (k, v) in fields {
         out.push_str(k);
         out.push_str(": ");
-        out.push_str(v);
+        out.push_str(&single_line(v));
         out.push('\n');
     }
     out.push_str("---\n\n");
@@ -76,6 +102,45 @@ pub fn merge(fields: &BTreeMap<String, String>, body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_newline_in_a_value_cannot_forge_a_second_field() {
+        // The escalation this guards: a free-text value that closes its own
+        // line and writes a field the caller never authorised.
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "title".to_string(),
+            "urgent\ncompleted: 2026-01-01".to_string(),
+        );
+        let out = merge(&fields, "body");
+        assert_eq!(
+            out.lines().filter(|l| l.starts_with("completed:")).count(),
+            0,
+            "a forged `completed:` field escaped into the header:\n{out}"
+        );
+        let (parsed, _) = parse(&out);
+        assert_eq!(parsed.len(), 1, "exactly the one field that was asked for");
+        assert_eq!(parsed.get("title").unwrap(), "urgent completed: 2026-01-01");
+    }
+
+    #[test]
+    fn a_bare_delimiter_in_a_value_cannot_close_the_header() {
+        let mut fields = BTreeMap::new();
+        fields.insert("tags".to_string(), "a\n---\nrest".to_string());
+        fields.insert("status".to_string(), "todo".to_string());
+        let (parsed, body) = parse(&merge(&fields, "real body"));
+        assert_eq!(parsed.len(), 2, "the header stayed intact");
+        assert_eq!(parsed.get("status").unwrap(), "todo");
+        assert_eq!(body, "real body");
+    }
+
+    #[test]
+    fn ordinary_values_are_untouched() {
+        let mut fields = BTreeMap::new();
+        fields.insert("tags".to_string(), "backend, urgent".to_string());
+        let (parsed, _) = parse(&merge(&fields, "b"));
+        assert_eq!(parsed.get("tags").unwrap(), "backend, urgent");
+    }
 
     #[test]
     fn no_frontmatter_is_all_body() {

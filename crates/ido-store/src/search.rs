@@ -14,8 +14,10 @@ use crate::paths::{rel_path, section_dir};
 
 /// Cap on returned results — enough for a palette, bounded for huge wells.
 const MAX_HITS: usize = 50;
-/// Cap on a snippet's length, in characters.
-const SNIPPET_CHARS: usize = 120;
+/// Cap on a snippet's length, in characters. `pub(crate)` so the semantic half
+/// ([`crate::index::hybrid`]) can cut its snippets to the same length — a fused
+/// result list where the two halves truncate differently reads as a bug.
+pub(crate) const SNIPPET_CHARS: usize = 120;
 
 /// Search a well's notes, wiki, and tasks for `query` (case-insensitive,
 /// substring). Ranked by relevance — a title match dominates, then the number of
@@ -75,11 +77,50 @@ fn walk_notes(dir: &Path, root: &Path, q: &str, out: &mut Vec<(i64, SearchHit)>)
     }
 }
 
-/// Scan the flat `wiki/` namespace. A page's id is its slug (file stem).
+/// Recursively scan the `wiki/` namespace. Folders under `wiki/` are purely
+/// cosmetic — a page's identity is its slug (the file stem) wherever the file
+/// sits, exactly as `wiki::find_page` resolves it — so the walk recurses but
+/// the id never carries the folder.
+///
+/// The recursion is not optional: a foldered page that only the flat top-level
+/// scan could see would be invisible to the palette and to MCP `search`, and
+/// the semantic half (`index::store::collect_wiki`) already recurses — the two
+/// halves of hybrid retrieval must see the same corpus.
 fn search_wiki(well: &str, q: &str, out: &mut Vec<(i64, SearchHit)>) {
-    for_each_md(&section_dir(well, Section::Wiki), |stem, body| {
-        push_hit(out, "wiki", stem.to_string(), stem.to_string(), body, "", q);
-    });
+    walk_wiki(&section_dir(well, Section::Wiki), q, out);
+}
+
+fn walk_wiki(dir: &Path, q: &str, out: &mut Vec<(i64, SearchHit)>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        if name.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            walk_wiki(&path, q, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            let Some(slug) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            let body = fs::read_to_string(&path).unwrap_or_default();
+            push_hit(
+                out,
+                "wiki",
+                slug.to_string(),
+                slug.to_string(),
+                &body,
+                "",
+                q,
+            );
+        }
+    }
 }
 
 /// Scan the flat top level of `tasks/` (the `goals/` subdir is skipped — it's a
@@ -162,13 +203,19 @@ fn snippet(body: &str, q: &str) -> String {
         .find(|l| !l.is_empty() && l.to_lowercase().contains(q))
         .or_else(|| body.lines().map(str::trim).find(|l| !l.is_empty()))
         .unwrap_or_default();
-    if line.chars().count() <= SNIPPET_CHARS {
-        line.to_string()
-    } else {
-        let mut out: String = line.chars().take(SNIPPET_CHARS).collect();
-        out.push('…');
-        out
+    truncate_chars(line, SNIPPET_CHARS)
+}
+
+/// `text` cut to at most `max` **characters** (never bytes — this runs on
+/// arbitrary user prose), with an ellipsis marking the cut. `pub(crate)` so the
+/// semantic half builds its snippets the same way.
+pub(crate) fn truncate_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
     }
+    let mut out: String = text.chars().take(max).collect();
+    out.push('…');
+    out
 }
 
 #[cfg(test)]
@@ -221,6 +268,40 @@ mod tests {
         assert!(ids.contains(&("wiki", "login")));
         assert!(ids.contains(&("task", "fix-auth")));
         assert_eq!(hits.len(), 3, "goals/ subdir is skipped");
+    }
+
+    #[test]
+    fn wiki_pages_in_cosmetic_folders_are_found_by_slug() {
+        // Regression: the wiki scan used to read only the flat top level of
+        // `wiki/`, so every page in an organisational folder was invisible to
+        // the palette and to MCP search — while the semantic half indexed them.
+        let (_d, w) = well();
+        write(&w, "wiki/flat.md", "a flat page about kombucha");
+        write(
+            &w,
+            "wiki/concepts/nested.md",
+            "a nested page about kombucha",
+        );
+        write(
+            &w,
+            "wiki/concepts/deeper/very-nested.md",
+            "a deeply nested page about kombucha",
+        );
+
+        let hits = search(w.clone(), "kombucha".into());
+        let ids: Vec<&str> = hits.iter().map(|h| h.id.as_str()).collect();
+        assert!(ids.contains(&"flat"));
+        assert!(ids.contains(&"nested"), "folders are cosmetic: {ids:?}");
+        assert!(ids.contains(&"very-nested"), "and they nest: {ids:?}");
+        assert!(
+            hits.iter().all(|h| h.kind == "wiki" && !h.id.contains('/')),
+            "a page's id is its slug, never its folder path: {ids:?}"
+        );
+
+        // The slug is also matchable as a title, wherever the file sits.
+        let by_title = search(w, "very-nested".into());
+        assert_eq!(by_title.len(), 1);
+        assert_eq!(by_title[0].id, "very-nested");
     }
 
     #[test]

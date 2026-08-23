@@ -52,11 +52,20 @@ impl State {
                 }
                 let path = w.path.clone();
                 spawn_local(async move {
-                    let hits = ipc::search(path, query.clone()).await;
+                    // Hybrid by default: the backend fuses the lexical scan
+                    // with the vector index and tells us which retrieval it
+                    // actually managed, so the palette can badge a semantic
+                    // result without ever claiming one it did not get.
+                    let response = ipc::search_hybrid(path, query.clone(), None, None).await;
                     if self.search_query.get_untracked() == query {
+                        let (hits, mode) = match response {
+                            Some(r) => (r.hits, r.mode),
+                            None => (Vec::new(), String::new()),
+                        };
                         let mut combined = command_hits(&query);
                         combined.extend(hits);
                         self.search_results.set(combined);
+                        self.search_mode.set(mode);
                         self.search_sel.set(0);
                     }
                 });

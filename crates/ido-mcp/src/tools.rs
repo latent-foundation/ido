@@ -8,18 +8,28 @@
 //!
 //! Every read goes through `ido_store`, so there is never a second, drifting
 //! copy of "how a task file is parsed" — and **nothing here writes**: no
-//! `migrate_well`, no sweep, no store mutation of any kind.
+//! `migrate_well`, no `migrate_well` scaffold, no store mutation of any kind.
+//! The one thing the process may write is the rebuildable search cache under
+//! `<well>/.ido/index/`, and that happens in [`crate::semantic`], never here.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+use ido_store::index::hybrid::{self, SearchMode};
 use ido_store::model::{Section, Task, TreeNode};
-use ido_store::{notes, search as store_search, tasks, wells, wiki};
+use ido_store::{notes, tasks, wells, wiki};
 use rmcp::schemars;
 
 use crate::render::{
-    cell, clamp_limit, content_block, dash, guard_id, header, iso_date, paging, row, window,
+    cell, clamp_limit, content_block, dash, guard_id, header, iso_date, paging, parse_date_arg,
+    row, window,
 };
+use crate::semantic::Semantic;
+
+/// How deep the retrieval stack reaches before `section` scoping and `limit`
+/// trim it. Matches the store's own cap, so scoping to one section can't starve
+/// a result list that a broader query would have filled.
+const MAX_SCAN: usize = 50;
 
 // --- parameters -------------------------------------------------------------
 //
@@ -30,14 +40,36 @@ use crate::render::{
 /// Parameters for [`search`].
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SearchParams {
-    /// What to look for. Case-insensitive substring match over titles, bodies,
-    /// and task tags — this is keyword search, not semantic, so prefer the
-    /// literal words the note would use.
+    /// What to look for. In the default "hybrid" mode a natural-language
+    /// question works as well as literal words; in "keyword" mode this is a
+    /// case-insensitive substring match over titles, bodies and task tags.
     pub query: String,
     /// Restrict to one section: "notes", "wiki", or "tasks". Omit to search all three.
     pub section: Option<String>,
+    /// How to retrieve: "hybrid" (default — meaning and exact words fused),
+    /// "semantic" (meaning only; finds a note that never uses your words), or
+    /// "keyword" (exact substrings only; best for an identifier, a slug, a
+    /// spelling). If this well has no semantic index, every mode answers with
+    /// keyword results and the response says so.
+    pub mode: Option<String>,
     /// Max hits to return (default 10, hard cap 50).
     pub limit: Option<u32>,
+}
+
+impl SearchParams {
+    /// The requested retrieval mode, defaulting to hybrid (§5.2). An
+    /// unrecognised value is an error, not a silent fallback.
+    pub fn mode(&self) -> Result<SearchMode, String> {
+        match self
+            .mode
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+        {
+            Some(mode) => SearchMode::parse(mode),
+            None => Ok(SearchMode::Hybrid),
+        }
+    }
 }
 
 /// Parameters for [`get_entry`].
@@ -109,8 +141,13 @@ pub struct ListGoalsParams {
 
 /// Which kind of entry an id names. Mirrors the `kind` strings the store's
 /// `SearchHit` / `LinkRef` use, so ids round-trip verbatim.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Kind {
+///
+/// `pub(crate)` so [`crate::resources`] and [`crate::prompts`] share this
+/// instead of a second copy: a resource's `ido://<kind>/<id>` uri names the
+/// same four kinds `get_entry` does, and a prompt's task/goal rows use
+/// [`status_of`] below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
     Note,
     Wiki,
     Task,
@@ -119,7 +156,7 @@ enum Kind {
 
 impl Kind {
     /// Parse the `kind` a tool was handed, rejecting anything unknown.
-    fn parse(kind: &str) -> Result<Self, String> {
+    pub(crate) fn parse(kind: &str) -> Result<Self, String> {
         match kind.trim().to_lowercase().as_str() {
             "note" => Ok(Kind::Note),
             "wiki" => Ok(Kind::Wiki),
@@ -132,7 +169,7 @@ impl Kind {
     }
 
     /// The wire name, as `search` / `list_entries` report it.
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Kind::Note => "note",
             Kind::Wiki => "wiki",
@@ -156,26 +193,12 @@ fn parse_section(section: &str) -> Result<Section, String> {
 
 /// The 10-char date prefix of a `due` value — a due may carry an optional
 /// " HH:MM", and every date comparison in ido works off the prefix.
-fn due_date(due: &str) -> &str {
+///
+/// `pub(crate)` so [`crate::prompts`] filters overdue/due-today tasks the same
+/// way every other date comparison in this crate does — one prefix rule, not
+/// a second one for the prompts.
+pub(crate) fn due_date(due: &str) -> &str {
     due.get(..10).unwrap_or(due)
-}
-
-/// Validate a caller-supplied `YYYY-MM-DD` filter argument, returning the date
-/// itself. Anything else is a tool error rather than a silently-empty result.
-fn parse_date_arg(what: &str, value: &str) -> Result<String, String> {
-    let date: String = value.trim().chars().take(10).collect();
-    let shaped = date.chars().count() == 10
-        && date.char_indices().all(|(i, c)| match i {
-            4 | 7 => c == '-',
-            _ => c.is_ascii_digit(),
-        });
-    if shaped {
-        Ok(date)
-    } else {
-        Err(format!(
-            "{what} must be a date like 2026-08-25 (got `{value}`)"
-        ))
-    }
 }
 
 /// Count the non-folder leaves of a tree.
@@ -193,7 +216,11 @@ fn count_files(nodes: &[TreeNode]) -> usize {
 }
 
 /// Flatten a tree into `(id, name)` leaves, depth-first.
-fn flatten(nodes: &[TreeNode], out: &mut Vec<(String, String)>) {
+///
+/// `pub(crate)` so [`crate::resources`] can enumerate notes the same way
+/// [`list_entries`] and [`wiki_pages`] do, for `resources/list`'s
+/// most-recently-modified sweep across every kind.
+pub(crate) fn flatten(nodes: &[TreeNode], out: &mut Vec<(String, String)>) {
     for node in nodes {
         if node.is_dir {
             flatten(&node.children, out);
@@ -205,7 +232,11 @@ fn flatten(nodes: &[TreeNode], out: &mut Vec<(String, String)>) {
 
 /// Every wiki page as `(slug, wiki-relative path)` — folders are cosmetic, so
 /// the slug is the id and the path is only shown for orientation.
-fn wiki_pages(well: &str) -> Vec<(String, String)> {
+///
+/// `pub(crate)` so [`crate::write`] can answer "did this page already exist?"
+/// with the same enumeration the read tools use — a second copy would be one
+/// more thing to keep in step with the store's tree shape.
+pub(crate) fn wiki_pages(well: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     flatten(&wiki::list_wiki(well.to_string()), &mut out);
     // `flatten` yields (path, name); a page's identity is its name (the slug).
@@ -222,7 +253,10 @@ fn checks(task: &Task) -> String {
 }
 
 /// A task's column, naming the un-columned case the way the board does.
-fn status_of(task: &Task) -> &str {
+///
+/// `pub(crate)` so [`crate::prompts`]'s daily review names a backlog task the
+/// same way `list_tasks` does, rather than re-deriving the empty-string rule.
+pub(crate) fn status_of(task: &Task) -> &str {
     if task.status.is_empty() {
         "backlog"
     } else {
@@ -236,8 +270,9 @@ fn occurrences(hay: &str, needle: &str) -> usize {
 }
 
 /// Absolute path of the file backing an entry, for `stat`-only use (size +
-/// mtime in [`list_entries`]). Never opened for reading.
-fn entry_file(well: &str, kind: Kind, rel: &str) -> PathBuf {
+/// mtime in [`list_entries`], and in [`crate::resources`]'s recency sweep).
+/// Never opened for reading.
+pub(crate) fn entry_file(well: &str, kind: Kind, rel: &str) -> PathBuf {
     let root = Path::new(well);
     match kind {
         Kind::Note => root.join("notes").join(format!("{rel}.md")),
@@ -262,8 +297,11 @@ fn file_stats(path: &Path) -> (String, String) {
 
 // --- 1. well_info -----------------------------------------------------------
 
-/// Orientation: what this well is, how its board is shaped, and how much is in it.
-pub fn well_info(well: &str, name: &str) -> String {
+/// Orientation: what this well is, how its board is shaped, how much is in it,
+/// which search modes are actually live here (§5.2's index status), and whether
+/// this process can write (§8's `--allow-write`, which the model otherwise has
+/// no way to discover except by trying).
+pub fn well_info(well: &str, name: &str, semantic: &Semantic, allow_write: bool) -> String {
     let manifest = wells::read_manifest(well);
     let columns = tasks::task_columns(well.to_string());
     let all_tasks = tasks::list_tasks(well.to_string());
@@ -313,8 +351,25 @@ pub fn well_info(well: &str, name: &str) -> String {
             None => "off".to_string(),
         }
     );
-    let _ = writeln!(out, "- search: keyword-only (semantic index not built)");
-    let _ = writeln!(out, "- access: read-only (this server never writes)");
+    let _ = writeln!(out, "{}", semantic.status_lines());
+    let _ = writeln!(
+        out,
+        "- access: {}{}",
+        if allow_write {
+            "write-enabled — `create_entry`, `append_to_entry`, `create_task` and \
+             `update_task_field` are live. Even so this server never deletes an entry, never \
+             overwrites or truncates a body, and edits a task one field at a time"
+        } else {
+            "read-only — this server never creates, edits or deletes any note, page, task or goal"
+        },
+        if semantic.unavailable().is_none() {
+            "; it also maintains the rebuildable search cache under `.ido/index`"
+        } else if allow_write {
+            ""
+        } else {
+            " and writes nothing at all"
+        }
+    );
     if !Path::new(well).join(".ido").join("well.toml").exists() {
         let _ = writeln!(
             out,
@@ -344,12 +399,18 @@ pub fn well_info(well: &str, name: &str) -> String {
 
 // --- 2. search --------------------------------------------------------------
 
-/// Keyword search across notes, wiki pages, and tasks.
-pub fn search(well: &str, p: SearchParams) -> Result<String, String> {
+/// Hybrid / semantic / keyword search across notes, wiki pages, and tasks.
+///
+/// The mode that actually ran is reported in the heading, and a request that
+/// had to fall back says why in the line under it (§6.1: degradation is never
+/// silent — a model reading "hybrid" over keyword-only results would draw the
+/// wrong conclusion from an empty answer).
+pub fn search(well: &str, semantic: &Semantic, p: SearchParams) -> Result<String, String> {
     let query = p.query.trim().to_string();
     if query.is_empty() {
         return Err("query is empty — pass the words you expect to appear".to_string());
     }
+    let requested = p.mode()?;
     let wanted = match p
         .section
         .as_deref()
@@ -365,13 +426,22 @@ pub fn search(well: &str, p: SearchParams) -> Result<String, String> {
     };
     let limit = clamp_limit(p.limit, 10, 50);
 
-    let all = store_search::search(well.to_string(), query.clone());
-    let scanned = all.len();
-    let hits: Vec<_> = all
+    let outcome = hybrid::search_with(well, &query, requested, MAX_SCAN, semantic.embedder());
+    let effective = outcome.mode;
+    // The store knows *that* the index couldn't answer; this process often
+    // knows the better *why* (no model on this machine, no semantic build), so
+    // prefer it and fall back to the store's reason.
+    let degraded = outcome
+        .degraded
+        .map(|store_reason| semantic.unavailable().unwrap_or(store_reason));
+
+    let matching: Vec<_> = outcome
+        .hits
         .into_iter()
         .filter(|h| wanted.is_none_or(|k| h.kind == k))
-        .take(limit)
         .collect();
+    let scanned = matching.len();
+    let hits: Vec<_> = matching.into_iter().take(limit).collect();
 
     let needle = query.to_lowercase();
     // Only fetched when a task hit needs its body/tags counted.
@@ -379,15 +449,18 @@ pub fn search(well: &str, p: SearchParams) -> Result<String, String> {
 
     let scope = wanted.map_or_else(|| "all sections".to_string(), |k| format!("{k}s only"));
     let mut out = format!(
-        "# search: \"{query}\" — {} hit(s), {scope} (keyword search)\n\n",
-        hits.len()
+        "# search: \"{query}\" — {} hit(s), {scope} ({} search)\n\n",
+        hits.len(),
+        effective.as_str()
     );
-    if hits.is_empty() {
+    if let Some(reason) = &degraded {
         let _ = writeln!(
             out,
-            "Nothing matched. This is substring matching, not semantic: try a shorter or more \
-             literal term, a different spelling, or `list_entries` to see what the well contains."
+            "semantic index unavailable: {reason} — keyword results.\n"
         );
+    }
+    if hits.is_empty() {
+        let _ = writeln!(out, "{}", nothing_matched(effective));
         return Ok(out);
     }
 
@@ -414,19 +487,7 @@ pub fn search(well: &str, p: SearchParams) -> Result<String, String> {
         if !hit.snippet.is_empty() {
             let _ = writeln!(out, "   > {}", hit.snippet);
         }
-        // The store ranks a title match above any number of body matches, so
-        // say which one this is — otherwise "0 occurrences" at rank 1 reads
-        // like a bug rather than a title hit.
-        let _ = writeln!(
-            out,
-            "   {}{} occurrence(s) in the body\n",
-            if hit.title.to_lowercase().contains(&needle) {
-                "title match; "
-            } else {
-                ""
-            },
-            occurrences(&body, &needle)
-        );
+        let _ = writeln!(out, "   {}\n", why_it_matched(hit, &body, &needle));
     }
 
     let _ = writeln!(
@@ -441,6 +502,38 @@ pub fn search(well: &str, p: SearchParams) -> Result<String, String> {
         );
     }
     Ok(out)
+}
+
+/// The advice to give when a search came back empty — which differs by mode:
+/// under keyword the fix is usually a different literal word, under
+/// semantic/hybrid it is usually that the well genuinely doesn't hold this.
+fn nothing_matched(mode: SearchMode) -> &'static str {
+    match mode {
+        SearchMode::Keyword => {
+            "Nothing matched. This is substring matching, not semantic: try a shorter or more \
+             literal term, a different spelling, or `mode=\"hybrid\"` to search by meaning too. \
+             `list_entries` shows what the well actually contains."
+        }
+        _ => {
+            "Nothing matched, by wording or by meaning. Try a different angle on the topic, or \
+             `list_entries` to see what the well actually contains — it may simply not be here."
+        }
+    }
+}
+
+/// One line explaining why a hit is in the list. The store ranks a title match
+/// above any number of body matches, and a semantic hit may contain the query's
+/// words nowhere at all — saying which is which keeps "0 occurrence(s)" at rank
+/// 1 from reading like a bug.
+fn why_it_matched(hit: &ido_store::model::SearchHit, body: &str, needle: &str) -> String {
+    if hit.title.to_lowercase().contains(needle) {
+        let count = occurrences(body, needle);
+        return format!("title match; {count} occurrence(s) in the body");
+    }
+    match occurrences(body, needle) {
+        0 => "no literal match — retrieved by meaning".to_string(),
+        count => format!("{count} occurrence(s) in the body"),
+    }
 }
 
 // --- 3. get_entry -----------------------------------------------------------
@@ -939,20 +1032,6 @@ mod tests {
         assert!(Kind::parse("notes").is_err(), "section name, not a kind");
         assert!(parse_section("notes").is_ok());
         assert!(parse_section("note").is_err(), "kind name, not a section");
-    }
-
-    #[test]
-    fn date_args_take_the_ten_char_prefix() {
-        assert_eq!(
-            parse_date_arg("due_before", "2026-08-25").unwrap(),
-            "2026-08-25"
-        );
-        assert_eq!(
-            parse_date_arg("due_before", "2026-08-25 14:30").unwrap(),
-            "2026-08-25"
-        );
-        assert!(parse_date_arg("due_before", "next tuesday").is_err());
-        assert!(parse_date_arg("due_before", "2026-8-5").is_err());
     }
 
     #[test]

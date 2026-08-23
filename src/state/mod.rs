@@ -20,12 +20,13 @@ use leptos::task::spawn_local;
 use crate::blocks;
 use crate::dates;
 use crate::ipc;
-use crate::model::{Goal, SavedView, SearchHit, Task, TreeNode, WellRef};
+use crate::model::{Goal, JobStatus, SavedView, SearchHit, SemanticInfo, Task, TreeNode, WellRef};
 
 mod assets;
 mod editor;
 mod notes;
 mod search;
+mod semantic;
 mod tasks;
 mod types;
 mod wells;
@@ -216,6 +217,19 @@ pub struct State {
     pub search_sel: RwSignal<usize>,
     /// Generation counter debouncing the disk scan across rapid keystrokes.
     pub search_gen: RwSignal<u32>,
+    /// Which retrieval actually answered the last palette query — "keyword",
+    /// "hybrid", or "semantic". Read straight off the backend response rather
+    /// than assumed, so the palette can only claim semantic when it got it.
+    pub search_mode: RwSignal<String>,
+
+    // --- semantic search --------------------------------------------------
+    /// Whether semantic search can run, the model it needs, and this well's
+    /// index — the settings pane's whole data source. `None` until first read.
+    pub semantic: RwSignal<Option<SemanticInfo>>,
+    /// The background model-download / index-build job's progress.
+    pub job: RwSignal<JobStatus>,
+    /// Whether a progress poll timer is already running (one at a time).
+    pub job_polling: RwSignal<bool>,
 
     // --- transient UI (settings / toast / menu) ---------------------------
     /// Whether the settings modal is open.
@@ -305,6 +319,12 @@ impl State {
             search_results: RwSignal::new(Vec::new()),
             search_sel: RwSignal::new(0),
             search_gen: RwSignal::new(0),
+            search_mode: RwSignal::new(String::new()),
+
+            // semantic search
+            semantic: RwSignal::new(None),
+            job: RwSignal::new(JobStatus::default()),
+            job_polling: RwSignal::new(false),
 
             // transient UI
             settings_open: RwSignal::new(false),

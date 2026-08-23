@@ -38,8 +38,15 @@ Open or create a **well**, then work in three sections, switched from the left r
 Tabs keep several entries open at once: single-click to preview, edit to keep, restored when you
 reopen a well. **Split** the editor into two panes side by side (drag a tab across, or to the edge),
 and **search** across all three sections with `Ctrl+K`. Right-click any entry for its actions.
+
+`Ctrl+K` searches by **meaning as well as wording**. Enable it once in settings — ido downloads a
+small embedding model (~130 MB, the only time it ever uses the network) and indexes the well — and
+from then on "why did we avoid shipping a native library" finds the note that argued it, even
+though it shares no words with it. Everything stays on your machine, and if you never turn it on,
+search keeps working exactly as before.
+
 Any MCP client can read the well too — see [Agent access](#agent-access-mcp) below. Bigger bets
-still ahead: semantic search, on-device AI, and optional sync.
+still ahead: on-device AI and optional sync.
 
 ## Install
 
@@ -67,8 +74,9 @@ macOS and Linux builds aren't published yet; both build from source.
 ## Agent access (MCP)
 
 Any [MCP](https://modelcontextprotocol.io) client — Claude Code first — can read a well:
-notes, wiki, and tasks, searchable and addressable by id. The server is strictly **read-only**
-and needs no network access; it doesn't touch anything ido itself couldn't also read.
+notes, wiki, and tasks, searchable and addressable by id. The server is **read-only unless you
+explicitly start it with `--allow-write`**, and needs no network access at all; it doesn't touch
+anything ido itself couldn't also read.
 
 It's a separate, on-demand process, not a background service — **ido doesn't need to be
 running** for a client to use it, and you never start it by hand. Setup is install once,
@@ -83,8 +91,19 @@ register once:
    and shuts it down when it's finished — the same way it manages any other stdio MCP server.
 
 The server exposes seven read-only tools (`well_info`, `search`, `get_entry`, `list_entries`,
-`backlinks`, `list_tasks`, `list_goals`) over keyword search today; a semantic layer is
-planned. Full design and roadmap: [`docs/mcp-server.md`](docs/mcp-server.md).
+`backlinks`, `list_tasks`, `list_goals`). `search` is **hybrid** — the same meaning-plus-wording
+retrieval `Ctrl+K` uses, sharing the same index — and degrades to plain keyword search, saying so,
+whenever the model or index isn't there. Every entry is also addressable as a resource
+(`ido://note/…`, `ido://wiki/…`, `ido://task/…`, `ido://goal/…`), and two prompts —
+`daily_review` and `weekly_digest` — summarise the well for you.
+
+Adding `--allow-write` to the server's arguments turns on four more tools: create a note or wiki
+page, append to an existing one, create a task, and set one field of a task. **None of them can
+destroy anything** — there is no delete, nothing is ever overwritten or truncated, and a name
+that's already taken gets a suffix rather than clobbering what's there. Leave the flag off and
+those tools don't exist at all.
+
+Full design and roadmap: [`docs/mcp-server.md`](docs/mcp-server.md).
 
 For development, `just mcp` runs the server directly against your most-recent well (stderr to
 the terminal) and `just mcp-inspect` runs it under the

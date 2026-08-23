@@ -10,9 +10,7 @@
 
 use tauri_plugin_dialog::DialogExt;
 
-use ido_store::model::{
-    Goal, LinkRef, NoteMeta, SavedView, SearchHit, Session, Task, TreeNode, WellRef,
-};
+use ido_store::model::{Goal, LinkRef, NoteMeta, SavedView, Session, Task, TreeNode, WellRef};
 
 use crate::registry::register_well;
 
@@ -305,13 +303,6 @@ pub fn delete_goal(well: String, id: String) -> Result<String, String> {
 #[tauri::command]
 pub fn restore_goal(well: String, id: String, content: String) -> Result<(), String> {
     ido_store::tasks::restore_goal(well, id, content)
-}
-
-// --- search ----------------------------------------------------------------
-
-#[tauri::command]
-pub fn search(well: String, query: String) -> Vec<SearchHit> {
-    ido_store::search::search(well, query)
 }
 
 // --- assets ----------------------------------------------------------------

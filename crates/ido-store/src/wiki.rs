@@ -20,7 +20,9 @@ use std::path::{Path, PathBuf};
 
 use crate::model::{LinkRef, Section, TreeNode};
 use crate::notes::{build_tree, same_entry};
-use crate::paths::{join_rel, parent_of, rel_path, section_dir, slugify, unique_name, valid_name};
+use crate::paths::{
+    append_text, join_rel, parent_of, rel_path, section_dir, slugify, unique_name, valid_name,
+};
 
 /// The absolute `wiki/` folder for `well`.
 fn wiki_root(well: &str) -> PathBuf {
@@ -201,6 +203,42 @@ pub fn create_page(well: String, folder: String) -> Result<String, String> {
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let slug = unique_slug(&root, "untitled");
     fs::write(dir.join(format!("{slug}.md")), "").map_err(|e| e.to_string())?;
+    Ok(slug)
+}
+
+/// Create a wiki page at `slug` with `content`, never overwriting an
+/// existing page: where [`write_page`] always overwrites (fine for the app,
+/// where the user is looking at the page they're editing), this is the
+/// MCP-facing create-or-uniquify half (see `docs/mcp-server.md` §8). A taken
+/// slug uniquifies with `-N` via [`unique_slug`] — the same section-wide
+/// scheme [`create_page`] uses. `slug` must be a single path segment (no
+/// `/`; see [`valid_name`]) and, since a wiki slug never carries folders,
+/// always lands at the wiki **root** regardless of where a colliding slug
+/// happens to live. Returns the slug actually written.
+pub fn create_page_at(well: String, slug: String, content: String) -> Result<String, String> {
+    let slug = valid_name(&slug)?;
+    let root = wiki_root(&well);
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let final_slug = unique_slug(&root, slug);
+    fs::write(root.join(format!("{final_slug}.md")), content).map_err(|e| e.to_string())?;
+    Ok(final_slug)
+}
+
+/// Append `text` to page `slug`, creating it (at the wiki root) when it
+/// doesn't exist yet. An existing page is found wherever it lives — folders
+/// are organisational only, see [`find_page`] — and appended in place; see
+/// [`crate::paths::append_text`] for the exact separator rule. Returns
+/// `slug` unchanged (identity is the slug, never the path). `slug` must be a
+/// single path segment (no `/`; see [`valid_name`]).
+pub fn append_page(well: String, slug: String, text: String) -> Result<String, String> {
+    valid_name(&slug)?;
+    let root = wiki_root(&well);
+    let path = find_page(&root, &slug).unwrap_or_else(|| root.join(format!("{slug}.md")));
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    fs::write(&path, append_text(&existing, &text)).map_err(|e| e.to_string())?;
     Ok(slug)
 }
 
@@ -705,6 +743,58 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&note).unwrap(),
             "logged in via [[authentication]]"
+        );
+    }
+
+    #[test]
+    fn create_page_at_uniquifies_instead_of_overwriting() {
+        let (_d, w) = well();
+        let slug = create_page_at(w.clone(), "auth-system".into(), "original".into()).unwrap();
+        assert_eq!(slug, "auth-system");
+        let slug2 = create_page_at(w.clone(), "auth-system".into(), "different".into()).unwrap();
+        assert_eq!(slug2, "auth-system-2");
+        // The original page's content survived untouched.
+        assert_eq!(read_page(w.clone(), "auth-system".into()), "original");
+        assert_eq!(read_page(w, "auth-system-2".into()), "different");
+    }
+
+    #[test]
+    fn create_page_at_collides_section_wide_even_inside_a_folder() {
+        let (_d, w) = well();
+        let folder = create_wiki_folder(w.clone(), String::new()).unwrap();
+        // Put a page called "beta" inside a folder...
+        write_page(w.clone(), "beta".into(), "in a folder".into()).unwrap();
+        let inside = move_wiki_entry(w.clone(), "beta".into(), false, folder).unwrap();
+        assert_eq!(inside, "new folder/beta");
+        // ...then create_page_at("beta") must uniquify, not collide, and the
+        // new page lands at the wiki root regardless of the folder.
+        let slug = create_page_at(w.clone(), "beta".into(), "new one".into()).unwrap();
+        assert_eq!(slug, "beta-2");
+        assert!(slugs(&w).contains(&("beta-2".to_string(), false)));
+        assert_eq!(read_page(w, "beta".into()), "in a folder");
+    }
+
+    #[test]
+    fn append_page_creates_when_missing_and_appends_when_present() {
+        let (_d, w) = well();
+        let slug = append_page(w.clone(), "log".into(), "first entry".into()).unwrap();
+        assert_eq!(slug, "log");
+        assert_eq!(read_page(w.clone(), "log".into()), "first entry\n");
+
+        append_page(w.clone(), "log".into(), "second entry".into()).unwrap();
+        assert_eq!(
+            read_page(w.clone(), "log".into()),
+            "first entry\n\nsecond entry\n"
+        );
+
+        // Appending finds a page wherever it lives, not just the root.
+        let folder = create_wiki_folder(w.clone(), String::new()).unwrap();
+        write_page(w.clone(), "auth-system".into(), "the hub".into()).unwrap();
+        move_wiki_entry(w.clone(), "auth-system".into(), false, folder).unwrap();
+        append_page(w.clone(), "auth-system".into(), "more detail".into()).unwrap();
+        assert_eq!(
+            read_page(w, "auth-system".into()),
+            "the hub\n\nmore detail\n"
         );
     }
 }

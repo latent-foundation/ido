@@ -1,0 +1,31 @@
+{"query": "where do we store login credentials", "expected": [{"kind": "note", "id": "password-manager-notes"}], "class": "paraphrase"}
+{"query": "how do I confirm my data would survive a major disaster", "expected": [{"kind": "note", "id": "homelab/backup-strategy"}], "class": "paraphrase"}
+{"query": "how are my home gadgets grouped into separate zones for security", "expected": [{"kind": "note", "id": "homelab/network-vlan-plan"}], "class": "paraphrase"}
+{"query": "which discoloration signifies contamination too advanced to save, as opposed to mere carelessness", "expected": [{"kind": "note", "id": "sourdough/starter-log"}], "class": "paraphrase"}
+{"query": "when is it sensible to trim what's outperformed and restore an investment's original balance", "expected": [{"kind": "wiki", "id": "investment-glossary"}], "class": "paraphrase"}
+{"query": "why choose a pricier professional coating over a cheap DIY spray can", "expected": [{"kind": "note", "id": "bike/frame-strip-notes"}], "class": "paraphrase"}
+{"query": "why does a minimal setup need an outside tiebreaker", "expected": [{"kind": "note", "id": "homelab/proxmox-cluster-setup"}], "class": "paraphrase"}
+{"query": "how does this disk system catch and mend problems in the bytes without anyone telling it to", "expected": [{"kind": "wiki", "id": "zfs"}], "class": "paraphrase"}
+{"query": "did a past customer hint they may wish for a scheduling feature after their shop moves to a different spot", "expected": [{"kind": "note", "id": "freelance/client-communication-log"}], "class": "paraphrase"}
+{"query": "is the point to earn as much cash as possible or just be done with all of it by the weekend", "expected": [{"kind": "note", "id": "garage-sale-notes"}], "class": "paraphrase"}
+{"query": "why keep rainy-day money somewhere unglamorous instead of putting it into investments", "expected": [{"kind": "note", "id": "finance/emergency-fund-plan"}], "class": "paraphrase"}
+{"query": "which of my plants hates having its position changed", "expected": [{"kind": "note", "id": "houseplants"}], "class": "paraphrase"}
+{"query": "which vehicle service item am I most behind on right now", "expected": [{"kind": "note", "id": "car-maintenance-log"}], "class": "paraphrase"}
+{"query": "what piece of art have I been putting off installing", "expected": [{"kind": "note", "id": "weekend-todo"}], "class": "paraphrase"}
+{"query": "max_retry_backoff_ms", "expected": [{"kind": "note", "id": "homelab/backup-strategy"}], "class": "identifier"}
+{"query": "WSBC-4417-982", "expected": [{"kind": "note", "id": "bike/frame-strip-notes"}], "class": "identifier"}
+{"query": "Rosewill RSV-L4500U", "expected": [{"kind": "note", "id": "homelab/server-rack-build"}], "class": "identifier"}
+{"query": "UniFi Network 8.1.113", "expected": [{"kind": "note", "id": "homelab/unifi-firewall-rules"}], "class": "identifier"}
+{"query": "8842-991", "expected": [{"kind": "note", "id": "finance/brokerage-notes"}], "class": "identifier"}
+{"query": "SM-BB71-41B", "expected": [{"kind": "note", "id": "bike/drivetrain-parts"}], "class": "identifier"}
+{"query": "Doughlores", "expected": [{"kind": "note", "id": "sourdough/starter-log"}], "class": "identifier"}
+{"query": "Riverbend Coffee Co", "expected": [{"kind": "note", "id": "freelance/invoice-tracking"}], "class": "identifier"}
+{"query": "VLAN 42", "expected": [{"kind": "note", "id": "homelab/network-vlan-plan"}], "class": "identifier"}
+{"query": "SOW-2026-014", "expected": [{"kind": "note", "id": "freelance/acme-corp-contract"}, {"kind": "task", "id": "send-acme-invoice"}, {"kind": "goal", "id": "freelance-acme-project"}], "class": "cross-section"}
+{"query": "Priyanka Osei", "expected": [{"kind": "note", "id": "freelance/acme-corp-contract"}, {"kind": "note", "id": "freelance/client-communication-log"}, {"kind": "wiki", "id": "acme-contact"}], "class": "cross-section"}
+{"query": "pve-node07", "expected": [{"kind": "note", "id": "homelab/proxmox-cluster-setup"}, {"kind": "wiki", "id": "proxmox"}], "class": "cross-section"}
+{"query": "tank-zpool01", "expected": [{"kind": "note", "id": "homelab/proxmox-cluster-setup"}, {"kind": "wiki", "id": "zfs"}], "class": "cross-section"}
+{"query": "Zbigniew", "expected": [{"kind": "note", "id": "bike/wheel-truing-log"}, {"kind": "wiki", "id": "gear-list"}], "class": "cross-section"}
+{"query": "CS-M8100-12", "expected": [{"kind": "note", "id": "bike/drivetrain-parts"}, {"kind": "task", "id": "order-replacement-chain"}], "class": "cross-section"}
+{"query": "what's blocking the rack migration", "expected": [{"kind": "task", "id": "order-rack-rails"}, {"kind": "note", "id": "homelab/server-rack-build"}], "class": "cross-section"}
+{"query": "what's left to do before the bike rebuild is finished", "expected": [{"kind": "task", "id": "true-front-wheel"}, {"kind": "goal", "id": "bike-restoration"}, {"kind": "note", "id": "bike/wheel-truing-log"}], "class": "cross-section"}

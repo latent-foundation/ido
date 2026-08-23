@@ -38,6 +38,12 @@ target
 /dev-well/.ido/session.toml
 /dev-well/assets/
 
+# The semantic index (docs/mcp-server.md §6.4) — rebuildable per-machine cache,
+# and keyed to whichever embedding model built it, so it is never portable.
+# Binary vectors would also be pure churn in a diff. Written into any well the
+# server indexes, including the committed fixtures.
+**/.ido/index/
+
 .claude
 
 # MCP client config: machine-local, never committed. `ido-dev` is portable

@@ -10,6 +10,10 @@
 //! - **Bounded output.** Every body is windowed by [`window`] and every list is
 //!   capped by [`clamp_limit`], so a tool result can't blow the client's
 //!   context on a large well.
+//!
+//! [`parse_date_arg`] lives here for the same reason: the read tools filter on
+//! dates and the write tools set them, and two date validators would eventually
+//! disagree about what a date is.
 
 use std::fmt::Write as _;
 
@@ -50,6 +54,67 @@ pub fn guard_id(what: &str, id: &str) -> Result<(), String> {
         return bad("ids are relative to the well, so they can't be absolute");
     }
     Ok(())
+}
+
+/// Validate a caller-supplied `YYYY-MM-DD` argument, returning the date itself.
+/// Anything else is a tool error rather than a silently-empty result (when a
+/// read tool filters on it) or a silently-unsortable field (when a write tool
+/// stores it — ido's date comparisons are lexicographic on the 10-char prefix,
+/// so `2026-8-5` would sort wrong forever).
+///
+/// A trailing time is *ignored* here, not rejected: `due_before="2026-08-25
+/// 14:30"` filters on the date, exactly as every other date comparison in ido
+/// does. Use [`parse_due_arg`] where the time must be kept.
+pub fn parse_date_arg(what: &str, value: &str) -> Result<String, String> {
+    let date: String = value.trim().chars().take(10).collect();
+    let shaped = date.chars().count() == 10
+        && date.char_indices().all(|(i, c)| match i {
+            4 | 7 => c == '-',
+            _ => c.is_ascii_digit(),
+        });
+    if shaped {
+        Ok(date)
+    } else {
+        Err(format!(
+            "{what} must be a date like 2026-08-25 (got `{value}`)"
+        ))
+    }
+}
+
+/// Validate a `due` value — a [`parse_date_arg`] date, optionally followed by a
+/// 24-hour ` HH:MM` — returning it normalised to one space between the two.
+///
+/// The optional time is ido's own `due` format (`YYYY-MM-DD HH:MM`), chosen so
+/// that lexicographic order stays chronological; a 12-hour time or a stray
+/// second would break that, so both are refused rather than coerced.
+pub fn parse_due_arg(what: &str, value: &str) -> Result<String, String> {
+    let value = value.trim();
+    let date = parse_date_arg(what, value)?;
+    let rest = value.chars().skip(10).collect::<String>();
+    // ISO 8601's `T` separator is what a model reaches for half the time; take
+    // it and normalise, rather than refusing over punctuation.
+    let rest = rest.trim();
+    let rest = rest.strip_prefix(['T', 't']).unwrap_or(rest).trim();
+    if rest.is_empty() {
+        return Ok(date);
+    }
+    let bad = || {
+        Err(format!(
+            "{what} must be a date like 2026-08-25, optionally with a 24-hour time — \
+             \"2026-08-25 14:30\" (got `{value}`)"
+        ))
+    };
+    let Some((hh, mm)) = rest.split_once(':') else {
+        return bad();
+    };
+    let two_digits = |s: &str| s.len() == 2 && s.bytes().all(|b| b.is_ascii_digit());
+    if !two_digits(hh) || !two_digits(mm) {
+        return bad();
+    }
+    match (hh.parse::<u32>(), mm.parse::<u32>()) {
+        (Ok(h), Ok(m)) if h < 24 && m < 60 => Ok(format!("{date} {hh}:{mm}")),
+        _ => bad(),
+    }
 }
 
 /// Resolve a caller's `limit` against this tool's default and hard cap.
@@ -219,6 +284,51 @@ mod tests {
         let w = window(body, 99, 10);
         assert_eq!(w.text, "");
         assert_eq!((w.start, w.end), (11, 11));
+    }
+
+    #[test]
+    fn date_args_take_the_ten_char_prefix() {
+        assert_eq!(
+            parse_date_arg("due_before", "2026-08-25").unwrap(),
+            "2026-08-25"
+        );
+        assert_eq!(
+            parse_date_arg("due_before", "2026-08-25 14:30").unwrap(),
+            "2026-08-25"
+        );
+        assert!(parse_date_arg("due_before", "next tuesday").is_err());
+        assert!(parse_date_arg("due_before", "2026-8-5").is_err());
+    }
+
+    #[test]
+    fn due_args_keep_a_24_hour_time_and_refuse_anything_else() {
+        assert_eq!(parse_due_arg("due", " 2026-08-25 ").unwrap(), "2026-08-25");
+        assert_eq!(
+            parse_due_arg("due", "2026-08-25 14:30").unwrap(),
+            "2026-08-25 14:30"
+        );
+        assert_eq!(
+            parse_due_arg("due", "2026-08-25T09:05").unwrap(),
+            "2026-08-25 09:05",
+            "the separator is normalised; the stored format is one space"
+        );
+        assert_eq!(
+            parse_due_arg("due", "2026-08-25 00:00").unwrap(),
+            "2026-08-25 00:00"
+        );
+        for junk in [
+            "2026-08-25 2:30",
+            "2026-08-25 14:30:00",
+            "2026-08-25 2pm",
+            "2026-08-25 24:00",
+            "2026-08-25 14:60",
+            "tomorrow",
+        ] {
+            assert!(
+                parse_due_arg("due", junk).is_err(),
+                "`{junk}` must be refused"
+            );
+        }
     }
 
     #[test]
