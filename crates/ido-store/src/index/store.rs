@@ -259,10 +259,33 @@ fn stat_file(path: &Path) -> Option<(u64, u64)> {
     Some((meta.len(), mtime_ms))
 }
 
+/// Lowercase, unseparated, zero-padded hex — two chars per byte.
+///
+/// **This is an on-disk format, not a display choice.** Every `sha256` in
+/// `manifest.json` is written by this function and compared against it on the
+/// next rebuild, so a change here (uppercase, separators, a `0x` prefix)
+/// wouldn't look like a bug: every file would simply appear modified, and
+/// every well on every machine would silently re-embed from scratch. The test
+/// below pins the exact output against a published vector.
+///
+/// Written by hand rather than via `format!("{:x}", …)` because `Digest::
+/// finalize` returns a different array type per `digest` major version, and
+/// only some of those implement `LowerHex` — `digest` 0.11's `hybrid_array::
+/// Array` does not. Iterating bytes works on every version.
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    hex(&hasher.finalize())
 }
 
 fn sha256_of_file(path: &Path) -> String {
@@ -729,6 +752,31 @@ pub fn index_status(well: &str) -> Option<IndexStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The hash strings in `manifest.json` are an on-disk format: these two
+    /// published SHA-256 vectors pin both the digest and its hex encoding, so
+    /// a dependency bump that changes either is a failing test rather than a
+    /// silent full re-embed of every well.
+    #[test]
+    fn sha256_hex_matches_the_published_vectors() {
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    /// Encoding details the format depends on: lowercase, no separators, and
+    /// a leading zero kept on every byte below 0x10.
+    #[test]
+    fn hex_is_lowercase_unseparated_and_zero_padded() {
+        assert_eq!(hex(&[0x00, 0x0f, 0xa0, 0xff]), "000fa0ff");
+        assert_eq!(hex(&[]), "");
+        assert_eq!(sha256_hex(b"").len(), 64);
+    }
     use crate::index::embed::FakeEmbedder;
     use tempfile::{TempDir, tempdir};
 

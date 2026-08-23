@@ -299,6 +299,14 @@ cargo check -p ido-ui                      # fast type-check of just the fronten
   through `State::open_link`: internal `[[wikilinks]]` (`ido:wiki/<slug>`) open/create the page in a
   tab; everything else goes to `open_external` (OS browser). A navigated webview white-screens the
   app. Raw HTML in notes is rendered as text, not executed (see `markdown.rs`).
+- **The index manifest's `sha256` strings are an on-disk format, not a display choice.**
+  `index::store::hex` writes them and the next rebuild compares against them, so lowercase /
+  unseparated / zero-padded is load-bearing: change it and nothing errors — every file just looks
+  modified and every well silently re-embeds from scratch. It is hand-written rather than
+  `format!("{:x}", …)` because `Digest::finalize`'s array type differs per `digest` major and 0.11's
+  doesn't implement `LowerHex` (this is what the sha2 0.10 → 0.11 bump broke). Two published
+  SHA-256 vectors pin it in `store.rs`'s tests; `download.rs` uses the same encoder for its
+  download pins rather than a second copy.
 - **There is exactly one version number, and it lives in `[workspace.package]`** in the root
   [Cargo.toml](Cargo.toml). All four crates inherit it (`version.workspace = true`), so bumping a
   release is one line. This is not just tidiness: `tauri.conf.json` omits `version` (Tauri derives

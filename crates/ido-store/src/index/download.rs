@@ -23,6 +23,10 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+// Lowercase hex, to compare against the pins as written — the same encoder the
+// index manifest uses, so the two can't drift.
+use crate::index::store::hex;
+
 use super::embed::ModelSpec;
 
 /// Overrides the cache **root** (tests, evals, a machine with a small `C:`).
@@ -316,15 +320,6 @@ fn sha256_file(path: &Path) -> Result<String, String> {
         hasher.update(&buf[..n]);
     }
     Ok(hex(&hasher.finalize()))
-}
-
-/// Lowercase hex, to compare against the pins as written.
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes.iter().fold(String::new(), |mut s, b| {
-        let _ = write!(s, "{b:02x}");
-        s
-    })
 }
 
 #[cfg(test)]

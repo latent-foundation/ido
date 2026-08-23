@@ -1172,6 +1172,21 @@ Mostly a non-event — ido's tree already carries several crates at two majors (
 
 - **`schemars`** — ido has 0.8.22 and 0.9.0 via Tauri; rmcp wants **1.2.2**. A third copy compiles.
   Compile-time cost only; the two never meet at a type boundary.
+- **`sha2`** — `ido-store` moved to **0.11** (2026-08-23) and is its only consumer; 0.10.9 survives
+  in the tree but *only* under `tauri-codegen` and the `wasm_split_macros` proc-macro, i.e. host
+  build tooling. Nothing in the shipped binary carries two copies, so this split costs compile time
+  and nothing else.
+
+  The bump broke one line and the break is worth remembering: `Digest::finalize` returns a
+  different array type per `digest` major, and 0.11's `hybrid_array::Array` **does not implement
+  `LowerHex`**, so `format!("{:x}", …)` stopped compiling. The fix was to hex-encode by hand in one
+  shared `store::hex` (which `download.rs` now also uses instead of its own copy) — version-agnostic,
+  and one encoder rather than two. What made this more than a compile error is that those strings
+  are an **on-disk format**: every `sha256` in `manifest.json` is written by that function and
+  compared against it on the next rebuild. An encoding that changed by one character would not have
+  looked like a bug — every file would simply have appeared modified, and every well on every
+  machine would have silently re-embedded from scratch. Two published SHA-256 vectors now pin the
+  digest *and* its encoding, so a future bump that changes either fails a test instead.
 
 ### 11.4 Measured build cost
 
