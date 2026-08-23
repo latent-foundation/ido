@@ -628,7 +628,9 @@ pub fn load_index(well: &str) -> Option<VectorIndex> {
         return None;
     }
     let vectors: Vec<f32> = bytes
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
     if vectors.len() != chunks.len() * manifest.dim {
